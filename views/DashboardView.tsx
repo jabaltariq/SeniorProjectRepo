@@ -29,7 +29,8 @@ import { DAILY_BONUS_AMOUNT } from '../models/constants';
 type DashboardViewType = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
 function pathToView(pathname: string): DashboardViewType {
-  const segment = pathname.replace(/^\/bethub\/?/, '').split('/')[0] || 'markets';
+  // React Router v6 strips basename from pathname, so we get e.g. "/friends" not "/bethub/friends"
+  const segment = (pathname.replace(/^\/bethub\/?/, '').replace(/^\//, '') || 'markets').split('/')[0] || 'markets';
   switch (segment) {
     case 'profile': return 'SETTINGS';
     case 'friends': return 'SOCIAL';
@@ -157,7 +158,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 <div className="py-20 text-center glass-card rounded-2xl border-dashed">
                   <Gamepad2 className="mx-auto text-slate-700 mb-4" size={48} />
                   <h3 className="text-xl font-bold text-slate-500">No bets placed yet</h3>
-                  <button onClick={() => navigate('')} className="mt-4 text-blue-400 hover:text-blue-300 font-bold">
+                  <button onClick={() => navigate('/')} className="mt-4 text-blue-400 hover:text-blue-300 font-bold">
                     Start betting now &rarr;
                   </button>
                 </div>
@@ -261,30 +262,30 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         </div>
       )}
       <nav className="w-full lg:w-20 bg-slate-900 border-b lg:border-r border-slate-800 flex flex-row lg:flex-col items-center py-4 px-2 lg:py-8 sticky top-0 z-40 lg:h-screen justify-between lg:justify-start lg:gap-8">
-        <NavLink to="" className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/40 cursor-pointer [&.active]:ring-2 [&.active]:ring-blue-400 [&.active]:ring-offset-2 [&.active]:ring-offset-slate-900">
+        <NavLink to="/" className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/40 cursor-pointer [&.active]:ring-2 [&.active]:ring-blue-400 [&.active]:ring-offset-2 [&.active]:ring-offset-slate-900">
           <Zap className="text-white" size={24} />
         </NavLink>
         <div className="flex lg:flex-col gap-4">
-          <NavLink to="" end title="Markets" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+          <NavLink to="/" end title="Markets" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <TrendingUp size={24} />
           </NavLink>
-          <NavLink to="leaderboard" title="Leaderboard" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+          <NavLink to="/leaderboard" title="Leaderboard" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <Medal size={24} />
           </NavLink>
-          <NavLink to="friends" title="Social & Friends" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+          <NavLink to="/friends" title="Social & Friends" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <Users size={24} />
           </NavLink>
-          <NavLink to="history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+          <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <History size={24} />
           </NavLink>
-          <NavLink to="profile" title="Settings" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+          <NavLink to="/profile" title="Settings" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <Settings size={24} />
           </NavLink>
         </div>
         <div className="hidden lg:mt-auto lg:block">
           <div className="flex flex-col items-center gap-2">
             <NavLink
-              to="profile"
+              to="/profile"
               className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
               title="Settings"
             >
