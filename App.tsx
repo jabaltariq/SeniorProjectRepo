@@ -47,6 +47,7 @@ const App: React.FC = () => {
       bonusMessage={dashboard.betting.bonusMessage}
       view={dashboard.view}
       userInitials={dashboard.auth.userInitials}
+      userEmail={dashboard.auth.userEmail ?? ''}
       sportFilter={dashboard.markets.sportFilter}
       leagueFilter={dashboard.markets.leagueFilter}
       searchQuery={dashboard.markets.searchQuery}
