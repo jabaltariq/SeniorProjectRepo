@@ -14,7 +14,6 @@ import {
   RefreshCw,
   AlertCircle,
   LogOut,
-  Settings,
 } from 'lucide-react';
 import type { Market, MarketOption, Bet } from '../models';
 import { MarketCard } from '../components/MarketCard';
@@ -22,6 +21,7 @@ import { BetSlip } from '../components/BetSlip';
 import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import { SettingsView } from './SettingsView';
+import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 
@@ -97,6 +97,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} />;
+      case 'PROFILE':
+        return (
+          <ProfileView
+            userInitials={userInitials}
+            userEmail={userEmail}
+            isOwnProfile
+            onOpenSettings={() => onSetView('SETTINGS')}
+          />
+        );
       case 'SETTINGS':
         return <SettingsView userEmail={userEmail} />;
       case 'HISTORY':
@@ -259,17 +268,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           <button title="History" onClick={() => onSetView('HISTORY')} className={`p-3 rounded-xl transition-all ${view === 'HISTORY' ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <History size={24} />
           </button>
-          <button title="Settings" onClick={() => onSetView('SETTINGS')} className={`p-3 rounded-xl transition-all ${view === 'SETTINGS' ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-            <Settings size={24} />
-          </button>
         </div>
         <div className="hidden lg:mt-auto lg:block">
           <div className="flex flex-col items-center gap-2">
             <button
               type="button"
-              onClick={() => onSetView('SETTINGS')}
-              className={`w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${view === 'SETTINGS' ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
-              title="Settings"
+              onClick={() => onSetView('PROFILE')}
+              className={`w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${view === 'PROFILE' ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
+              title="Profile"
             >
               <span className="text-xs font-bold">{userInitials}</span>
             </button>
