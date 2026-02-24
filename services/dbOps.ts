@@ -3,19 +3,6 @@ import { getFirestore } from "firebase/firestore";
 import { collection, getDocs, setDoc, doc, getDoc } from "firebase/firestore";
 import {APP} from "@/models/constants.ts";
 
-/*
-const firebaseConfig = {
-    apiKey: "AIzaSyCcgJVGV0L95RkcRZ-jqzFAepr3N73wewQ",
-    authDomain: "seniorproject-ce9fe.firebaseapp.com",
-    projectId: "seniorproject-ce9fe",
-    storageBucket: "seniorproject-ce9fe.firebasestorage.app",
-    messagingSenderId: "1007996245994",
-    appId: "1:1007996245994:web:5d168e3055cb61a14d8493",
-    measurementId: "G-81E1JLPRLN"
-};
-
-const app = initializeApp(firebaseConfig);*/
-
 const db = getFirestore(APP);
 
 export async function getUserMoney(uid : string) : Promise<number> {
