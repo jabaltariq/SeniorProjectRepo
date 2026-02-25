@@ -1,10 +1,22 @@
 import type { LeaderboardEntry, Friend, SocialActivity } from './index';
 
+import {initializeApp} from "firebase/app";
 export const INITIAL_BALANCE = 10000;
 export const DAILY_BONUS_AMOUNT = 500;
 export const BONUS_STORAGE_KEY = 'bethub_last_bonus_claim';
 
 export const SPORT_TABS = ['ALL', 'Football', 'Basketball', 'Baseball', 'Hockey', 'Soccer'] as const;
+
+export const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCcgJVGV0L95RkcRZ-jqzFAepr3N73wewQ",
+  authDomain: "seniorproject-ce9fe.firebaseapp.com",
+  projectId: "seniorproject-ce9fe",
+  storageBucket: "seniorproject-ce9fe.firebasestorage.app",
+  messagingSenderId: "1007996245994",
+  appId: "1:1007996245994:web:5d168e3055cb61a14d8493"
+}
+
+export const APP = initializeApp(FIREBASE_CONFIG)
 
 export const MOCK_LEADERBOARD: LeaderboardEntry[] = [
   { id: 'l1', name: 'CryptoWhale_99', avatar: 'CW', netWorth: 1450200, winRate: 72, rank: 1 },
