@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import {
   Trophy,
   Wallet as WalletIcon,
@@ -22,6 +22,7 @@ import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
+import {getUserMoney, listenForChange} from "@/services/dbOps.ts";
 
 interface DashboardViewProps {
   balance: number;
@@ -56,7 +57,7 @@ interface DashboardViewProps {
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
-  const {
+  var {
     balance,
     betSelection,
     dailyBonusAvailable,
@@ -88,6 +89,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   } = props;
 
   const renderContent = () => {
+    useEffect(() => {
+      listenForChange(localStorage.getItem("uid"))
+
+    }, []);
+
     switch (view) {
       case 'LEADERBOARD':
         return <Leaderboard entries={leaderboardEntries} />;

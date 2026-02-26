@@ -7,7 +7,7 @@ import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../model
  * Daily bonus: $500 once per day, stored in localStorage by date.
  */
 export function useBettingViewModel() {
-  const [balance, setBalance] = useState(INITIAL_BALANCE);
+  const [balance, setBalance] = useState(localStorage.getItem("userMoney") || 0);
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
   const [betSelection, setBetSelection] = useState<{ market: Market; option: MarketOption } | null>(null);
   // True if last claim was not today

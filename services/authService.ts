@@ -1,31 +1,17 @@
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import {setUserMoney} from "@/services/dbOps.ts";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword} from "firebase/auth";
+import {getUserMoney, setUserMoney} from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
 const USERS_KEY = 'bethub_users';
 const SESSION_KEY = 'bethub_session';
+var userEmail : string;
+var userMoney : number;
+var userId : string;
 
-/*
-const firebaseConfig = {
-  apiKey: import.meta.env.FIREBASE_API_KEY,
-  authDomain: import.meta.env.AUTH_DOMAIN,
-  projectId: import.meta.env.PROJECT_ID,
-  storageBucket: import.meta.env.STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.MESSAGING_SENDER_ID,
-  appId: import.meta.env.APP_ID
-  apiKey: "AIzaSyCcgJVGV0L95RkcRZ-jqzFAepr3N73wewQ",
-  authDomain: "seniorproject-ce9fe.firebaseapp.com",
-  projectId: "seniorproject-ce9fe",
-  storageBucket: "seniorproject-ce9fe.firebasestorage.app",
-  messagingSenderId: "1007996245994",
-  appId: "1:1007996245994:web:5d168e3055cb61a14d8493",
-  measurementId: "G-81E1JLPRLN"
-}
 
-const app = initializeApp(firebaseConfig)
-*/
 export interface User {
   email: string;
-  password: string;
+  money: number;
+  claimTime : string;
 }
 
 export async function signUp(email: string, password: string): Promise<{ success: boolean; error?: string }> {
@@ -57,7 +43,9 @@ export async function login(email: string, password: string): Promise<{ success:
   const auth = getAuth(APP);
   try {
     const userCredential = await signInWithEmailAndPassword(auth, trimmed, password)
-    const user = userCredential.user;
+    userEmail = userCredential.user.email
+    userMoney = (await getUserMoney(userCredential.user.uid))
+    userId = userCredential.user.uid
     setSession(trimmed);
     return { success : true };
   }
@@ -76,4 +64,7 @@ export function getSession(): string | null {
 
 function setSession(email: string) {
   localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem("userEmail", userEmail);
+  localStorage.setItem("userMoney", String(userMoney))
+  localStorage.setItem("uid", userId);
 }
