@@ -23,6 +23,7 @@ import { SocialView } from '../components/SocialView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import {getUserMoney, listenForChange} from "@/services/dbOps.ts";
+import {betList} from "@/services/authService.ts";
 
 interface DashboardViewProps {
   balance: number;
@@ -92,7 +93,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     useEffect(() => {
 
 
-      // Listen for changes going to the database.
+      // Listen for changes going to the database. Also genuinely one of the most cancerous things I've ever written.
       listenForChange(localStorage.getItem("uid"))
       async function fetchData() {
         localStorage.setItem("userMoney", String(await getUserMoney(localStorage.getItem("uid"))))
@@ -112,8 +113,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <History className="text-blue-400" size={24} /> Betting History
             </h2>
             <div className="space-y-4">
-              {props.activeBets.length > 0 ? (
-                props.activeBets.map(bet => (
+              {/*props.activeBets.length*/ betList.length > 0 ? (
+                /*props.activeBets*/betList.map(bet => (
                   <div key={bet.id} className="glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all">
                     <div className="flex justify-between items-start mb-4">
                       <div>

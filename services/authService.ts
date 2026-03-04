@@ -1,14 +1,15 @@
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword} from "firebase/auth";
-import {getLastDaily, getUserMoney, setNewDaily, setUserMoney} from "@/services/dbOps.ts";
+import {currBets, getBets, getLastDaily, getUserMoney, setNewDaily, setUserMoney} from "@/services/dbOps.ts";
 import {APP, BONUS_STORAGE_KEY} from "@/models/constants.ts";
 import {Timestamp} from "firebase/firestore";
+import {Bet} from "@/models";
 const USERS_KEY = 'bethub_users';
 const SESSION_KEY = 'bethub_session';
 var userEmail : string;
 var userMoney : number;
 var userId : string;
 var dailyBonusAvailable : string;
-
+export var betList : Bet[]
 
 export interface User {
   email: string;
@@ -73,6 +74,11 @@ export async function login(email: string, password: string): Promise<{ success:
     console.log("Email: " + userEmail);
     console.log("Total money: " + userMoney);
     console.log("Daily available: " + dailyBonusAvailable)
+
+    betList = await getBets(userId)
+
+    console.log("Bets added from database: " + betList.length)
+
     setSession(userEmail);
     return { success : true };
   }

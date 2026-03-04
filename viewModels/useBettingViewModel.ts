@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
 import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../models/constants';
-import {changeUserMoney, claimedDaily} from "@/services/dbOps.ts";
+import {addBet, changeUserMoney, claimedDaily} from "@/services/dbOps.ts";
 
 
 /**
@@ -36,6 +36,8 @@ export function useBettingViewModel() {
       potentialPayout: stake * betSelection.option.odds,
       placedAt: new Date()
     };
+
+    addBet(localStorage.getItem("uid"), newBet)
 
     setBalance(prev => prev - stake);
     setActiveBets(prev => [newBet, ...prev]);

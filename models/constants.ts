@@ -1,4 +1,4 @@
-import type { LeaderboardEntry, Friend, SocialActivity } from './index';
+import type {LeaderboardEntry, Friend, SocialActivity, Bet} from './index';
 
 import {initializeApp} from "firebase/app";
 export const INITIAL_BALANCE = 10000;
