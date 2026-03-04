@@ -1,5 +1,5 @@
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword} from "firebase/auth";
-import {getLastDaily, getUserMoney, setUserMoney} from "@/services/dbOps.ts";
+import {getLastDaily, getUserMoney, setNewDaily, setUserMoney} from "@/services/dbOps.ts";
 import {APP, BONUS_STORAGE_KEY} from "@/models/constants.ts";
 import {Timestamp} from "firebase/firestore";
 const USERS_KEY = 'bethub_users';
@@ -32,10 +32,11 @@ export async function signUp(email: string, password: string): Promise<{ success
     const user = userCredential.user;
 
     await setUserMoney(user.uid, 10000.00)
+    await setNewDaily(user.uid)
     userEmail = userCredential.user.email
     userMoney = (await getUserMoney(userCredential.user.uid))
     userId = userCredential.user.uid
-    console.log("Created user with the following credentials:")
+    console.log("Logged in user with the following credentials:")
     console.log("ID: " + userId)
     console.log("Email: " + userEmail);
     console.log("Total money: " + userMoney);
@@ -56,19 +57,22 @@ export async function login(email: string, password: string): Promise<{ success:
     userEmail = userCredential.user.email
     userId = userCredential.user.uid
     userMoney = (await getUserMoney(userCredential.user.uid))
-    /*
+
     const last = (await getLastDaily(userCredential.user.uid)).toDate();
     const now = new Date(Date.now());
-    if (last == now) {
+    console.log(last.toString())
+    console.log(now.toString())
+    if (last.getDay() == now.getDay()) {
       dailyBonusAvailable = "false";
     }
     else {
       dailyBonusAvailable = "true";
-    }*/
+    }
     console.log("Created user with the following credentials:")
     console.log("ID: " + userId)
     console.log("Email: " + userEmail);
     console.log("Total money: " + userMoney);
+    console.log("Daily available: " + dailyBonusAvailable)
     setSession(userEmail);
     return { success : true };
   }

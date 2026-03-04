@@ -57,6 +57,7 @@ export function useBettingViewModel() {
     setTimeout(() => setBonusMessage(null), 3000);*/
 
     if (localStorage.getItem("hasDailyBonus") == "true") {
+      setDailyBonusAvailable(false);
       changeUserMoney(localStorage.getItem("uid"), DAILY_BONUS_AMOUNT)
           .then(r =>
               setBonusMessage(`+$${DAILY_BONUS_AMOUNT} added to your wallet!`),
@@ -66,9 +67,10 @@ export function useBettingViewModel() {
     }
     else {
       setBonusMessage('Already claimed! Come back tomorrow for more.');
+      return
     }
     setTimeout(() => setBonusMessage(null), 3000);
-  }, [dailyBonusAvailable]);
+  });
 
   const clearBetSelection = useCallback(() => setBetSelection(null), []);
 

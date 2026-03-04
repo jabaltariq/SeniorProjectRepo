@@ -91,14 +91,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const renderContent = () => {
     useEffect(() => {
 
-      // this needs to be here, I dont know why it works and how it works but it works and im not going to touch it - ar
-      localStorage.setItem("userMoney", "0")
+
       // Listen for changes going to the database.
-      /*listenForChange(localStorage.getItem("uid"))
+      listenForChange(localStorage.getItem("uid"))
       async function fetchData() {
         localStorage.setItem("userMoney", String(await getUserMoney(localStorage.getItem("uid"))))
       }
-      fetchData();*/
+      fetchData();
     }, []);
 
     switch (view) {
@@ -294,12 +293,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Wallet Balance</p>
-                <p className="text-xl font-black text-green-400">${balance.toString()}</p>
+                <p className="text-xl font-black text-green-400">${localStorage.getItem("userMoney")}</p>
               </div>
             </div>
             <button
               onClick={onDailyBonus}
-              disabled={!dailyBonusAvailable}
+              disabled={!(dailyBonusAvailable)}
               className={`px-6 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all active:scale-95 ${dailyBonusAvailable ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
             >
               <Trophy size={18} /> {dailyBonusAvailable ? `Daily Bonus (+$${DAILY_BONUS_AMOUNT})` : 'Claimed Today'}
