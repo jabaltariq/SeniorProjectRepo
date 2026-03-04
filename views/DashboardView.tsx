@@ -294,7 +294,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Wallet Balance</p>
-                <p className="text-xl font-black text-green-400">${localStorage.getItem("userMoney")}</p>
+                <p className="text-xl font-black text-green-400">${balance.toString()}</p>
               </div>
             </div>
             <button

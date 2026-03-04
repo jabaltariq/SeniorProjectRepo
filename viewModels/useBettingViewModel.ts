@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
 import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../models/constants';
+import {changeUserMoney} from "@/services/dbOps.ts";
 
 
 /**
@@ -8,7 +9,7 @@ import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../model
  * Daily bonus: $500 once per day, stored in localStorage by date.
  */
 export function useBettingViewModel() {
-  const [balance, setBalance] = useState(localStorage.getItem("userMoney"));
+  const [balance, setBalance] = useState(parseInt(localStorage.getItem("userMoney")));
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
   const [betSelection, setBetSelection] = useState<{ market: Market; option: MarketOption } | null>(null);
   // True if last claim was not today
@@ -41,7 +42,7 @@ export function useBettingViewModel() {
     setBetSelection(null);
   }, [betSelection]);
 
-  const handleDailyBonus = useCallback(() => {
+  const handleDailyBonus = useCallback(() => {/*
     if (!dailyBonusAvailable) {
       setBonusMessage('Already claimed! Come back tomorrow for more.');
       setTimeout(() => setBonusMessage(null), 3000);
@@ -50,10 +51,20 @@ export function useBettingViewModel() {
     setBalance(prev => prev + DAILY_BONUS_AMOUNT);
     try {
       localStorage.setItem(BONUS_STORAGE_KEY, new Date().toISOString().slice(0, 10));
-    } catch { /* ignore */ }
+    } catch { }
     setDailyBonusAvailable(false);
     setBonusMessage(`+$${DAILY_BONUS_AMOUNT} added to your wallet!`);
-    setTimeout(() => setBonusMessage(null), 3000);
+    setTimeout(() => setBonusMessage(null), 3000);*/
+
+    if (localStorage.getItem("hasDailyBonus") == "true") {
+      changeUserMoney(localStorage.getItem("uid"), DAILY_BONUS_AMOUNT)
+          .then(r =>
+              setBonusMessage(`+$${DAILY_BONUS_AMOUNT} added to your wallet!`),
+              setBalance(prev => prev + DAILY_BONUS_AMOUNT))
+    }
+    else {
+
+    }
   }, [dailyBonusAvailable]);
 
   const clearBetSelection = useCallback(() => setBetSelection(null), []);
