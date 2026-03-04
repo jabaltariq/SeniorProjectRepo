@@ -90,8 +90,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
 
   const renderContent = () => {
     useEffect(() => {
-      listenForChange(localStorage.getItem("uid"))
 
+      // this needs to be here, I dont know why it works and how it works but it works and im not going to touch it - ar
+      localStorage.setItem("userMoney", "0")
+      // Listen for changes going to the database.
+      listenForChange(localStorage.getItem("uid"))
+      async function fetchData() {
+        localStorage.setItem("userMoney", String(await getUserMoney(localStorage.getItem("uid"))))
+      }
+      fetchData();
     }, []);
 
     switch (view) {
@@ -287,7 +294,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Wallet Balance</p>
-                <p className="text-xl font-black text-green-400">${balance.toLocaleString()}</p>
+                <p className="text-xl font-black text-green-400">${localStorage.getItem("userMoney")}</p>
               </div>
             </div>
             <button

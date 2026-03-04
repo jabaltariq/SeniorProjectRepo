@@ -1,4 +1,4 @@
-import { setDoc, doc, getDoc, getFirestore, onSnapshot } from "firebase/firestore";
+import { setDoc, doc, getDoc, getFirestore, onSnapshot, Timestamp } from "firebase/firestore";
 import {APP} from "@/models/constants.ts";
 
 const db = getFirestore(APP);
@@ -22,6 +22,12 @@ export async function setUserMoney(uid : string, amount : number) {
         money: amount
     });
 }
+
+export async function claimedDaily(uid : string) {
+    await setDoc(doc(db, "userInfo", uid), {
+        lastClaim: Timestamp.now()
+    })
+}
 export async function changeUserMoney(uid : string, amount : number) {
     const newMoney = ((await getUserMoney(uid)) + amount);
     await setDoc(doc(db, "userInfo", uid), {
@@ -35,4 +41,16 @@ export function listenForChange(uid : string) {
         console.log(source, " data: ", doc.data());
         localStorage.setItem("userMoney", doc.data().money)
     })
+}
+
+export async function getLastDaily(uid: string) {
+    const documentReference = doc(db, "userInfo", uid);
+    const documentSnapshot = await getDoc(documentReference);
+
+    if (documentSnapshot.exists()) {
+        const data = documentSnapshot.data();
+        return data["lastClaim"] as Timestamp;
+    } else {
+        return null;
+    }
 }

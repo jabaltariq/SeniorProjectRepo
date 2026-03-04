@@ -2,22 +2,22 @@ import { useState, useCallback } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
 import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../models/constants';
 
+
 /**
  * Balance, placed bets, and bet selection. Used by DashboardView.
  * Daily bonus: $500 once per day, stored in localStorage by date.
  */
 export function useBettingViewModel() {
-  const [balance, setBalance] = useState(localStorage.getItem("userMoney") || 0);
+  const [balance, setBalance] = useState(localStorage.getItem("userMoney"));
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
   const [betSelection, setBetSelection] = useState<{ market: Market; option: MarketOption } | null>(null);
   // True if last claim was not today
   const [dailyBonusAvailable, setDailyBonusAvailable] = useState(() => {
-    try {
-      const last = localStorage.getItem(BONUS_STORAGE_KEY);
-      const today = new Date().toISOString().slice(0, 10);
-      return last !== today;
-    } catch {
+    if (localStorage.getItem("hasDailyBonus") == "true") {
       return true;
+    }
+    else {
+      return false;
     }
   });
   const [bonusMessage, setBonusMessage] = useState<string | null>(null);

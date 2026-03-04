@@ -1,11 +1,13 @@
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword} from "firebase/auth";
-import {getUserMoney, setUserMoney} from "@/services/dbOps.ts";
-import {APP} from "@/models/constants.ts";
+import {getLastDaily, getUserMoney, setUserMoney} from "@/services/dbOps.ts";
+import {APP, BONUS_STORAGE_KEY} from "@/models/constants.ts";
+import {Timestamp} from "firebase/firestore";
 const USERS_KEY = 'bethub_users';
 const SESSION_KEY = 'bethub_session';
 var userEmail : string;
 var userMoney : number;
 var userId : string;
+var dailyBonusAvailable : string;
 
 
 export interface User {
@@ -46,6 +48,17 @@ export async function login(email: string, password: string): Promise<{ success:
     userEmail = userCredential.user.email
     userMoney = (await getUserMoney(userCredential.user.uid))
     userId = userCredential.user.uid
+    const last = (await getLastDaily(userCredential.user.uid)).toDate();
+    const now = new Date(Date.now());
+    if (last == now) {
+      dailyBonusAvailable = "false";
+    }
+    else {
+      dailyBonusAvailable = "true";
+    }
+
+
+
     setSession(trimmed);
     return { success : true };
   }
@@ -67,4 +80,5 @@ function setSession(email: string) {
   localStorage.setItem("userEmail", userEmail);
   localStorage.setItem("userMoney", String(userMoney))
   localStorage.setItem("uid", userId);
+  localStorage.setItem("hasDailyBonus", dailyBonusAvailable)
 }
