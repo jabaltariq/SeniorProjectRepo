@@ -38,8 +38,9 @@ export function useBettingViewModel() {
     };
 
     addBet(localStorage.getItem("uid"), newBet)
-
-    setBalance(prev => prev - stake);
+    changeUserMoney(localStorage.getItem("uid"), -newBet.stake)
+    localStorage.setItem("userMoney", (parseInt("userMoney") - newBet.stake).toString())
+    //setBalance(prev => prev - stake);
     setActiveBets(prev => [newBet, ...prev]);
     setBetSelection(null);
   }, [betSelection]);
