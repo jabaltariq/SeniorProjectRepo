@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
   const oddsApiKey = env.ODDS_API_KEY || '';
 
   return {
+    base: '/bethub/',
     server: {
       port: 3000,
       host: '0.0.0.0',

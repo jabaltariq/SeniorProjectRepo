@@ -8,7 +8,7 @@ import { MOCK_LEADERBOARD, MOCK_FRIENDS, MOCK_ACTIVITY } from '../models/constan
  * Composes betting + markets + auth for DashboardView.
  * view = which tab: MARKETS | HISTORY | LEADERBOARD | SOCIAL
  */
-export type DashboardView = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL';
+export type DashboardView = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
 interface AuthViewModel {
   userInitials: string;
