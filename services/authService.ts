@@ -1,31 +1,20 @@
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import {setUserMoney} from "@/services/dbOps.ts";
-import {APP} from "@/models/constants.ts";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword} from "firebase/auth";
+import {currBets, getBets, getLastDaily, getUserMoney, setNewDaily, setUserMoney} from "@/services/dbOps.ts";
+import {APP, BONUS_STORAGE_KEY} from "@/models/constants.ts";
+import {Timestamp} from "firebase/firestore";
+import {Bet} from "@/models";
 const USERS_KEY = 'bethub_users';
 const SESSION_KEY = 'bethub_session';
+var userEmail : string;
+var userMoney : number;
+var userId : string;
+var dailyBonusAvailable : string;
+export var betList : Bet[]
 
-/*
-const firebaseConfig = {
-  apiKey: import.meta.env.FIREBASE_API_KEY,
-  authDomain: import.meta.env.AUTH_DOMAIN,
-  projectId: import.meta.env.PROJECT_ID,
-  storageBucket: import.meta.env.STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.MESSAGING_SENDER_ID,
-  appId: import.meta.env.APP_ID
-  apiKey: "AIzaSyCcgJVGV0L95RkcRZ-jqzFAepr3N73wewQ",
-  authDomain: "seniorproject-ce9fe.firebaseapp.com",
-  projectId: "seniorproject-ce9fe",
-  storageBucket: "seniorproject-ce9fe.firebasestorage.app",
-  messagingSenderId: "1007996245994",
-  appId: "1:1007996245994:web:5d168e3055cb61a14d8493",
-  measurementId: "G-81E1JLPRLN"
-}
-
-const app = initializeApp(firebaseConfig)
-*/
 export interface User {
   email: string;
-  password: string;
+  money: number;
+  claimTime : string;
 }
 
 export async function signUp(email: string, password: string): Promise<{ success: boolean; error?: string }> {
@@ -42,8 +31,18 @@ export async function signUp(email: string, password: string): Promise<{ success
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, trimmed, password);
     const user = userCredential.user;
-    setSession(trimmed);
+
     await setUserMoney(user.uid, 10000.00)
+    await setNewDaily(user.uid)
+    userEmail = userCredential.user.email
+    userMoney = (await getUserMoney(userCredential.user.uid))
+    userId = userCredential.user.uid
+    dailyBonusAvailable = "true"  // New users haven't claimed yet
+    console.log("Logged in user with the following credentials:")
+    console.log("ID: " + userId)
+    console.log("Email: " + userEmail);
+    console.log("Total money: " + userMoney);
+    setSession(trimmed);
     return { success : true };
   }
   catch (error: any) {
@@ -57,17 +56,42 @@ export async function login(email: string, password: string): Promise<{ success:
   const auth = getAuth(APP);
   try {
     const userCredential = await signInWithEmailAndPassword(auth, trimmed, password)
-    const user = userCredential.user;
-    setSession(trimmed);
+    userEmail = userCredential.user.email
+    userId = userCredential.user.uid
+    userMoney = (await getUserMoney(userCredential.user.uid))
+
+    const lastClaim = await getLastDaily(userCredential.user.uid);
+    const now = new Date(Date.now());
+    if (lastClaim) {
+      const last = lastClaim.toDate();
+      if (last.getDate() === now.getDate() && last.getMonth() === now.getMonth() && last.getFullYear() === now.getFullYear()) {
+        dailyBonusAvailable = "false";
+      } else {
+        dailyBonusAvailable = "true";
+      }
+    } else {
+      dailyBonusAvailable = "true";
+    }
+    console.log("Created user with the following credentials:")
+    console.log("ID: " + userId)
+    console.log("Email: " + userEmail);
+    console.log("Total money: " + userMoney);
+    console.log("Daily available: " + dailyBonusAvailable)
+
+    betList = await getBets(userId)
+
+    console.log("Bets added from database: " + betList.length)
+
+    setSession(userEmail);
     return { success : true };
   }
   catch (error: any) {
-
+    return error.toString()
   }
 }
 
 export function logout(): void {
-  localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem("userEmail");
 }
 
 export function getSession(): string | null {
@@ -76,4 +100,8 @@ export function getSession(): string | null {
 
 function setSession(email: string) {
   localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem("userEmail", email);
+  localStorage.setItem("userMoney", String(userMoney))
+  localStorage.setItem("uid", userId);
+  localStorage.setItem("hasDailyBonus", dailyBonusAvailable)
 }

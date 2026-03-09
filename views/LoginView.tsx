@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import { Mail, Lock } from 'lucide-react';
 import { AuthLayout } from '../components/AuthLayout';
 import { AuthInput } from '../components/AuthInput';
@@ -23,7 +23,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
     e.preventDefault();
     onSubmit(email, password);
   };
-
+  useEffect(() => {
+    localStorage.clear();
+  })
   return (
     <AuthLayout title="Log in">
       <form onSubmit={handleSubmit}>

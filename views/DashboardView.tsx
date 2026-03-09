@@ -1,3 +1,4 @@
+import React, {useEffect} from 'react';
 import React from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
@@ -25,6 +26,7 @@ import { SocialView } from '../components/SocialView';
 import { SettingsView } from './SettingsView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
+import {getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 
 type DashboardViewType = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
@@ -74,8 +76,10 @@ interface DashboardViewProps {
   onChallenge: (friend: Friend) => void;
 }
 
+var localBets = await getBets(localStorage.getItem("uid"))
+
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
-  const {
+  var {
     balance,
     betSelection,
     dailyBonusAvailable,
@@ -111,6 +115,19 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const view = pathToView(location.pathname);
 
   const renderContent = () => {
+    useEffect(() => {
+
+
+      // Listen for changes going to the database. Also genuinely one of the most cancerous things I've ever written.
+      listenForChange(localStorage.getItem("uid"))
+      async function fetchData() {
+        localStorage.setItem("userMoney", String(await getUserMoney(localStorage.getItem("uid"))))
+      }
+      fetchData();
+
+
+    }, []);
+
     switch (view) {
       case 'LEADERBOARD':
         return <Leaderboard entries={leaderboardEntries} />;
@@ -125,8 +142,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <History className="text-blue-400" size={24} /> Betting History
             </h2>
             <div className="space-y-4">
-              {props.activeBets.length > 0 ? (
-                props.activeBets.map(bet => (
+              {/*props.activeBets.length*/ localBets.length > 0 ? (
+                /*props.activeBets*/ localBets.map(bet => (
                   <div key={bet.id} className="glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all">
                     <div className="flex justify-between items-start mb-4">
                       <div>
@@ -313,12 +330,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Wallet Balance</p>
-                <p className="text-xl font-black text-green-400">${balance.toLocaleString()}</p>
+                <p className="text-xl font-black text-green-400">${localStorage.getItem("userMoney")}</p>
               </div>
             </div>
             <button
               onClick={onDailyBonus}
-              disabled={!dailyBonusAvailable}
+              disabled={!(dailyBonusAvailable)}
               className={`px-6 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all active:scale-95 ${dailyBonusAvailable ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
             >
               <Trophy size={18} /> {dailyBonusAvailable ? `Daily Bonus (+$${DAILY_BONUS_AMOUNT})` : 'Claimed Today'}
