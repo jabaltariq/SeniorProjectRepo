@@ -62,7 +62,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const isVisible = (s: ProfileSection) => visibleSections.includes(s);
 
   return (
-    <div className="animate-in fade-in duration-500 max-w-3xl">
+    <div className="animate-in fade-in duration-500 w-full">
       {/* Header with cog in top right */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-8">
         <div className="flex items-center gap-4">

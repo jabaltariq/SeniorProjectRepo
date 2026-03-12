@@ -1,5 +1,4 @@
-import React, {useEffect} from 'react';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -326,7 +325,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         </div>
       </nav>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-8">
+      <main className="flex-1 min-w-0 w-full overflow-y-auto custom-scrollbar p-4 lg:p-8">
         <header className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
@@ -341,7 +340,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Wallet Balance</p>
-                <p className="text-xl font-black text-green-400">${localStorage.getItem("userMoney")}</p>
+                <p className="text-xl font-black text-green-400">${balance.toLocaleString()}</p>
               </div>
             </div>
             <button
