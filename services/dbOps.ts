@@ -4,12 +4,23 @@ import { Bet, LeaderboardEntry } from "@/models";
 
 export var currBets = new Array<Bet>;
 
+/**
+ * Sets a specified user's username in Firestore
+ * @param uid A user's Firebase Authentication ID.
+ * @param name The new username that the user will have in Firestore.
+ * @author Aidan Rodriguez
+ */
 export async function setUserName(uid : string, name : string) {
     await setDoc(doc(db, "userInfo", uid), {
         name: name
     }, { merge: true })
 }
 
+/**
+ * Resets the user's win / loss ratio in Firestore.
+ * @param uid A user's Firebase Authentication ID.
+ * @author Aidan Rodriguez
+ */
 export async function resetRatio(uid: string) {
     await setDoc(doc(db, "userInfo", uid), {
         wins: 0,
@@ -17,6 +28,12 @@ export async function resetRatio(uid: string) {
     }, { merge: true })
 }
 
+/**
+ * Gets both the user's wins and losses from Firestore.
+ * @param uid A user's Firebase Authentication ID.
+ * @return An array of two numbers - index 0 is the user's wins, while index 1 is the user's losses.
+ * @author Aidan Rodriguez
+ */
 export async function getUserRatio(uid: string) : Promise<number[]> {
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);
