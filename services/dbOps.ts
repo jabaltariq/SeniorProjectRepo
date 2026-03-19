@@ -202,7 +202,10 @@ export async function getTopUsers() : Promise<LeaderboardEntry[]> {
 
     const querySnapshot = await getDocs(collection(db, "userInfo"))
     querySnapshot.forEach(async (doc) => {
-        const ratio = doc.data().wins / doc.data().losses
+        var ratio = (doc.data().wins / doc.data().losses) * 100
+        if (isNaN(ratio)) {
+            ratio = 100
+        }
         const newTopUser : LeaderboardEntry = {
             id: doc.id,
             name: doc.data().name,
