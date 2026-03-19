@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
 import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../models/constants';
 
@@ -6,21 +6,37 @@ import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../model
  * Balance, placed bets, and bet selection. Used by DashboardView.
  * Daily bonus: $500 once per day, stored in localStorage by date.
  */
-export function useBettingViewModel() {
+function getBonusStorageKey(userEmail: string | null) {
+  return `${BONUS_STORAGE_KEY}:${(userEmail ?? 'guest').toLowerCase()}`;
+}
+
+function isDailyBonusAvailable(userEmail: string | null) {
+  try {
+    const key = getBonusStorageKey(userEmail);
+    const last = localStorage.getItem(key);
+    const today = new Date().toISOString().slice(0, 10);
+    return last !== today;
+  } catch {
+    return true;
+  }
+}
+
+export function useBettingViewModel(userEmail: string | null) {
   const [balance, setBalance] = useState(INITIAL_BALANCE);
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
   const [betSelection, setBetSelection] = useState<{ market: Market; option: MarketOption } | null>(null);
   // True if last claim was not today
-  const [dailyBonusAvailable, setDailyBonusAvailable] = useState(() => {
-    try {
-      const last = localStorage.getItem(BONUS_STORAGE_KEY);
-      const today = new Date().toISOString().slice(0, 10);
-      return last !== today;
-    } catch {
-      return true;
-    }
-  });
+  const [dailyBonusAvailable, setDailyBonusAvailable] = useState(() => isDailyBonusAvailable(userEmail));
   const [bonusMessage, setBonusMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Reset transient betting state when the authenticated user changes.
+    setBalance(INITIAL_BALANCE);
+    setActiveBets([]);
+    setBetSelection(null);
+    setBonusMessage(null);
+    setDailyBonusAvailable(isDailyBonusAvailable(userEmail));
+  }, [userEmail]);
 
   const handlePlaceBet = useCallback((stake: number) => {
     if (!betSelection) return;
@@ -49,12 +65,12 @@ export function useBettingViewModel() {
     }
     setBalance(prev => prev + DAILY_BONUS_AMOUNT);
     try {
-      localStorage.setItem(BONUS_STORAGE_KEY, new Date().toISOString().slice(0, 10));
+      localStorage.setItem(getBonusStorageKey(userEmail), new Date().toISOString().slice(0, 10));
     } catch { /* ignore */ }
     setDailyBonusAvailable(false);
     setBonusMessage(`+$${DAILY_BONUS_AMOUNT} added to your wallet!`);
     setTimeout(() => setBonusMessage(null), 3000);
-  }, [dailyBonusAvailable]);
+  }, [dailyBonusAvailable, userEmail]);
 
   const clearBetSelection = useCallback(() => setBetSelection(null), []);
 

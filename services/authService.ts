@@ -1,7 +1,6 @@
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {setUserMoney} from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
-const USERS_KEY = 'bethub_users';
 const SESSION_KEY = 'bethub_session';
 
 /*
@@ -47,7 +46,7 @@ export async function signUp(email: string, password: string): Promise<{ success
     return { success : true };
   }
   catch (error: any) {
-
+    return { success: false, error: error?.message ?? 'Sign up failed' };
   }
 }
 
@@ -56,17 +55,18 @@ export async function login(email: string, password: string): Promise<{ success:
 
   const auth = getAuth(APP);
   try {
-    const userCredential = await signInWithEmailAndPassword(auth, trimmed, password)
-    const user = userCredential.user;
+    await signInWithEmailAndPassword(auth, trimmed, password)
     setSession(trimmed);
     return { success : true };
   }
   catch (error: any) {
-
+    return { success: false, error: error?.message ?? 'Login failed' };
   }
 }
 
 export function logout(): void {
+  const auth = getAuth(APP);
+  void signOut(auth).catch(() => undefined);
   localStorage.removeItem(SESSION_KEY);
 }
 

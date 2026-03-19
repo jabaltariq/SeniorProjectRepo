@@ -12,11 +12,12 @@ export type DashboardView = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | '
 
 interface AuthViewModel {
   userInitials: string;
+  userEmail?: string | null;
   logout: () => void;
 }
 
 export function useDashboardViewModel(auth: AuthViewModel) {
-  const betting = useBettingViewModel();
+  const betting = useBettingViewModel(auth.userEmail ?? null);
   const markets = useMarketsViewModel();
 
   const [view, setView] = useState<DashboardView>('MARKETS');

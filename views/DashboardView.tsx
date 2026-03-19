@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -109,6 +109,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const location = useLocation();
   const navigate = useNavigate();
   const view = pathToView(location.pathname);
+
+  useEffect(() => {
+    if (view === 'MARKETS') {
+      onRetryMarkets();
+    }
+  }, [view, onRetryMarkets]);
 
   const renderContent = () => {
     switch (view) {
