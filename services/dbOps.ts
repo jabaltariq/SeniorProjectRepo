@@ -1,11 +1,51 @@
-import { setDoc, doc, getDoc, getDocs, getFirestore, onSnapshot, collection, Timestamp } from "firebase/firestore";
-import {APP} from "@/models/constants.ts";
-import {Bet} from "@/models";
-import {getAuth} from "firebase/auth";
+import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, Timestamp } from "firebase/firestore";
+import { db } from "@/models/constants.ts";
+import { Bet, LeaderboardEntry } from "@/models";
 
-
-const db = getFirestore(APP);
 export var currBets = new Array<Bet>;
+
+/**
+ * Sets a specified user's username in Firestore
+ * @param uid A user's Firebase Authentication ID.
+ * @param name The new username that the user will have in Firestore.
+ * @author Aidan Rodriguez
+ */
+export async function setUserName(uid : string, name : string) {
+    await setDoc(doc(db, "userInfo", uid), {
+        name: name
+    }, { merge: true })
+}
+
+/**
+ * Resets the user's win / loss ratio in Firestore.
+ * @param uid A user's Firebase Authentication ID.
+ * @author Aidan Rodriguez
+ */
+export async function resetRatio(uid: string) {
+    await setDoc(doc(db, "userInfo", uid), {
+        wins: 0,
+        losses: 0
+    }, { merge: true })
+}
+
+/**
+ * Gets both the user's wins and losses from Firestore.
+ * @param uid A user's Firebase Authentication ID.
+ * @return An array of two numbers - index 0 is the user's wins, while index 1 is the user's losses.
+ * @author Aidan Rodriguez
+ */
+export async function getUserRatio(uid: string) : Promise<number[]> {
+    const documentReference = doc(db, "userInfo", uid);
+    const documentSnapshot = await getDoc(documentReference);
+
+    var winsAndLosses = [0, 0]
+    if (documentSnapshot.exists()) {
+        const data = documentSnapshot.data();
+        winsAndLosses[0] = data["wins"] as number
+        winsAndLosses[1] = data["losses"] as number
+        return winsAndLosses
+    }
+}
 
 /**
  * Returns the amount of money a user has in Firestore.
@@ -152,9 +192,7 @@ export async function getBets(uid: string) : Promise<Bet[]> {
     var betList = new Array()
     const querySnapshot = await getDocs(collection(db, "bets"));
     querySnapshot.forEach((doc) => {
-        console.log("Found bet!")
         if (doc.data().userID == uid) {
-            console.log("bet is valid!")
             const validBet : Bet = {
                 id: doc.id,
                 marketId: doc.data().marketId,
@@ -178,4 +216,50 @@ export async function getBets(uid: string) : Promise<Bet[]> {
         }
     })
     return betList
+}
+
+export async function getTopUsers() : Promise<LeaderboardEntry[]> {
+    var topUserList = new Array();
+
+
+    const querySnapshot = await getDocs(collection(db, "userInfo"))
+    querySnapshot.forEach(async (doc) => {
+        var ratio = (doc.data().wins / doc.data().losses) * 100
+        if (isNaN(ratio)) {
+            ratio = 100
+        }
+        const newTopUser : LeaderboardEntry = {
+            id: doc.id,
+            name: doc.data().name,
+            avatar: "",
+            netWorth: doc.data().money,
+            winRate: ratio,
+            rank: 1,
+            isCurrentUser: false
+        }
+        topUserList.push(newTopUser)
+    })
+
+    const sortFunc = (field) => {
+        return (a, b) => {
+            let comp = 0;
+            if (a[field] > b[field]) {
+                comp = 1;
+            }
+            else {
+                comp = 1;
+            }
+
+            return comp * -1;
+        }
+    }
+
+    topUserList.sort((a, b) => b.netWorth - a.netWorth )
+    var rankCounter = 0;
+    for (const user of topUserList) {
+        rankCounter++
+        topUserList[rankCounter - 1].rank = rankCounter
+    }
+
+    return topUserList;
 }

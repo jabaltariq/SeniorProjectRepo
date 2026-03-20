@@ -1,8 +1,15 @@
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword} from "firebase/auth";
-import {currBets, getBets, getLastDaily, getUserMoney, setNewDaily, setUserMoney} from "@/services/dbOps.ts";
-import {APP, BONUS_STORAGE_KEY} from "@/models/constants.ts";
-import {Timestamp} from "firebase/firestore";
-import {Bet} from "@/models";
+import {
+  getBets,
+  getLastDaily,
+  getUserMoney,
+  resetRatio,
+  setNewDaily,
+  setUserMoney,
+  setUserName
+} from "@/services/dbOps.ts";
+import { APP } from "@/models/constants.ts";
+import { Bet } from "@/models";
 const USERS_KEY = 'bethub_users';
 const SESSION_KEY = 'bethub_session';
 var userEmail : string;
@@ -34,6 +41,8 @@ export async function signUp(email: string, password: string): Promise<{ success
 
     await setUserMoney(user.uid, 10000.00)
     await setNewDaily(user.uid)
+    await resetRatio(user.uid)
+    await setUserName(user.uid, trimmed)
     userEmail = userCredential.user.email
     userMoney = (await getUserMoney(userCredential.user.uid))
     userId = userCredential.user.uid
