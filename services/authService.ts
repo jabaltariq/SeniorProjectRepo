@@ -24,7 +24,7 @@ export interface User {
   claimTime : string;
 }
 
-export async function signUp(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+export async function signUp(email: string, password: string, username : string): Promise<{ success: boolean; error?: string }> {
   const trimmed = email.trim().toLowerCase();
 
   if (!trimmed || !password) {
@@ -39,10 +39,10 @@ export async function signUp(email: string, password: string): Promise<{ success
     const userCredential = await createUserWithEmailAndPassword(auth, trimmed, password);
     const user = userCredential.user;
 
+    await setUserName(user.uid, username)
     await setUserMoney(user.uid, 10000.00)
     await setNewDaily(user.uid)
     await resetRatio(user.uid)
-    await setUserName(user.uid, trimmed)
     userEmail = userCredential.user.email
     userMoney = (await getUserMoney(userCredential.user.uid))
     userId = userCredential.user.uid

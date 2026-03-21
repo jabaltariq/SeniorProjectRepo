@@ -226,7 +226,7 @@ export async function getTopUsers() : Promise<LeaderboardEntry[]> {
         const newTopUser : LeaderboardEntry = {
             id: doc.id,
             name: doc.data().name,
-            avatar: "",
+            avatar: doc.data().name.slice(0, 2),
             netWorth: doc.data().money,
             winRate: ratio,
             rank: 1,
