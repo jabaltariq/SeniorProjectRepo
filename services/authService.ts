@@ -1,6 +1,14 @@
 
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { getBets, getLastDaily, getUserMoney, setNewDaily, setUserMoney } from "@/services/dbOps.ts";
+import {
+  getBets,
+  getLastDaily,
+  getUserMoney,
+  resetRatio,
+  setNewDaily,
+  setUserMoney,
+  setUserName
+} from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
 import { Bet } from "@/models";
 
@@ -33,17 +41,15 @@ export async function signUp(email: string, password: string, username : string)
     const userCredential = await createUserWithEmailAndPassword(auth, trimmed, password);
     const user = userCredential.user;
 
-    await setUserMoney(user.uid, 10000.00);
-    await setNewDaily(user.uid);
-
-    userEmail = (userCredential.user.email ?? trimmed).toLowerCase();
-    userMoney = (await getUserMoney(userCredential.user.uid)) ?? 10000;
-    userId = userCredential.user.uid;
-    dailyBonusAvailable = "true"; // New users haven't claimed yet.
-
-    console.log("Logged in user with the following credentials:");
-    console.log("ID: " + userId);
-
+    await setUserName(user.uid, username)
+    await setUserMoney(user.uid, 10000.00)
+    await setNewDaily(user.uid)
+    await resetRatio(user.uid)
+    userEmail = userCredential.user.email
+    userMoney = (await getUserMoney(userCredential.user.uid))
+    userId = userCredential.user.uid
+    console.log("Logged in user with the following credentials:")
+    console.log("ID: " + userId)
     console.log("Email: " + userEmail);
     console.log("Total money: " + userMoney);
     setSession(trimmed);
