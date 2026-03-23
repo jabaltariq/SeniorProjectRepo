@@ -8,12 +8,14 @@ import { addBet, changeUserMoney, claimedDaily, getUserMoney, listenForChange } 
  * Loads balance from Firestore and syncs via listenForChange.
  */
 export function useBettingViewModel() {
+  type BetSelection = { market: Market; option: MarketOption };
   const [balance, setBalance] = useState<number>(() => {
     const m = localStorage.getItem('userMoney');
     return m ? parseInt(m, 10) : 0;
   });
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
-  const [betSelection, setBetSelection] = useState<{ market: Market; option: MarketOption } | null>(null);
+  const [betSelection, setBetSelection] = useState<BetSelection | null>(null);
+  const [parlaySelections, setParlaySelections] = useState<BetSelection[]>([]);
   const [dailyBonusAvailable, setDailyBonusAvailable] = useState(() => {
     return localStorage.getItem('hasDailyBonus') === 'true';
   });
@@ -80,16 +82,36 @@ export function useBettingViewModel() {
     setTimeout(() => setBonusMessage(null), 3000);
   }, []);
 
-  const clearBetSelection = useCallback(() => setBetSelection(null), []);
+  const clearBetSelection = useCallback(() => {
+    setBetSelection(null);
+    setParlaySelections([]);
+  }, []);
 
   const selectBet = useCallback((market: Market, option: MarketOption) => {
-    setBetSelection({ market, option });
+    const key = `${market.id}:${option.id}`;
+    setParlaySelections((prev) => {
+      const exists = prev.some((sel) => `${sel.market.id}:${sel.option.id}` === key);
+      if (exists) {
+        const next = prev.filter((sel) => `${sel.market.id}:${sel.option.id}` !== key);
+        setBetSelection((current) => {
+          if (!current) return next[next.length - 1] ?? null;
+          const currentKey = `${current.market.id}:${current.option.id}`;
+          if (currentKey !== key) return current;
+          return next[next.length - 1] ?? null;
+        });
+        return next;
+      }
+      const next = [...prev, { market, option }];
+      setBetSelection({ market, option });
+      return next;
+    });
   }, []);
 
   return {
     balance,
     activeBets,
     betSelection,
+    parlaySelections,
     dailyBonusAvailable,
     bonusMessage,
     handlePlaceBet,

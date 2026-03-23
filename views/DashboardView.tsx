@@ -63,6 +63,7 @@ interface DashboardViewProps {
   balance: number;
   activeBets: Bet[];
   betSelection: { market: Market; option: MarketOption } | null;
+  parlaySelections: Array<{ market: Market; option: MarketOption }>;
   dailyBonusAvailable: boolean;
   bonusMessage: string | null;
   view: string;
@@ -96,6 +97,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   var {
     balance,
     betSelection,
+    parlaySelections,
     dailyBonusAvailable,
     bonusMessage,
     userInitials,
@@ -201,6 +203,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
 
   const safeBalance = Number.isFinite(balance) ? balance : 0;
   const displayBalance = `$${Math.max(0, safeBalance).toFixed(2)}`;
+  const isOptionSelected = (market: Market, option: MarketOption) =>
+    parlaySelections.some((sel) => sel.market.id === market.id && sel.option.id === option.id);
 
   useEffect(() => {
     const uid = localStorage.getItem('uid');
@@ -561,10 +565,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                     <button
                                       key={`${opt.id}-${pairIdx}`}
                                       onClick={() => onSelectBet(market, opt)}
-                                      className="w-full rounded-md border border-slate-700/90 bg-slate-900/95 px-2.5 py-1.5 text-left hover:border-blue-500/80 hover:bg-blue-600/15 transition-all"
+                                      className={`w-full rounded-md border px-2.5 py-1.5 text-left transition-all ${
+                                        isOptionSelected(market, opt)
+                                          ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
+                                          : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                      }`}
                                     >
                                       <p className="text-[10px] text-slate-400 truncate">{opt.label}</p>
-                                      <p className="text-sm font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                      <p className={`text-sm font-semibold ${isOptionSelected(market, opt) ? 'text-violet-200' : 'text-blue-300'}`}>
+                                        {opt.odds.toFixed(2)}
+                                      </p>
                                     </button>
                                   ) : (
                                     <div key={`${market.id}-na-${idx}-${pairIdx}`} className="w-full rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-2 text-center text-xs text-slate-600">
@@ -648,42 +658,53 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         className={`flex-1 overflow-y-auto custom-scrollbar min-h-0 ${view === 'HOME' ? 'p-0 flex h-full min-h-0 flex-col' : 'p-4 lg:p-8'}`}
       >
         {view !== 'HOME' && (
-          <header className="flex flex-col gap-4 mb-8">
-            <div>
-              <div className="flex flex-wrap items-center gap-2 mb-1">
-                <h1 className="text-3xl font-black text-white tracking-tight">BetHub</h1>
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-300">
-                  <WalletIcon size={12} />
-                  {displayBalance}
-                </span>
-                <button
-                  onClick={onDailyBonus}
-                  disabled={!dailyBonusAvailable}
-                  className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-all active:scale-95 ${
-                    dailyBonusAvailable
-                      ? 'bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-700/25'
-                      : 'bg-slate-700/80 text-slate-400 cursor-not-allowed'
-                  }`}
-                >
-                  <Trophy size={15} />
-                  {dailyBonusAvailable ? `Free Claim +$${DAILY_BONUS_AMOUNT}` : 'CLAIMED'}
-                </button>
+          <header className="mb-7">
+            <div className="rounded-xl border border-slate-800/90 bg-slate-900/35 px-4 py-4 lg:px-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-[2rem] leading-none font-extrabold text-white tracking-tight">BetHub</h1>
+                  <p className="text-slate-400 mt-2 text-sm">Simulated betting with fake currency.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                    <WalletIcon size={13} />
+                    Balance
+                    <span className="text-emerald-200">{displayBalance}</span>
+                  </span>
+                  <button
+                    onClick={onDailyBonus}
+                    disabled={!dailyBonusAvailable}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5 transition-all active:scale-95 ${
+                      dailyBonusAvailable
+                        ? 'bg-indigo-600 hover:bg-indigo-500 text-indigo-50 shadow-md shadow-indigo-700/30'
+                        : 'bg-slate-700/80 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <Trophy size={14} />
+                    {dailyBonusAvailable ? `Free Claim +$${DAILY_BONUS_AMOUNT}` : 'Claimed'}
+                  </button>
+                </div>
               </div>
-              <p className="text-slate-400 mt-1">Simulated betting with fake currency.</p>
+              <div className="mt-4 border-b border-slate-800/70" />
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <button onClick={onLogout} className="lg:hidden px-4 py-2 rounded-xl text-sm text-slate-500 hover:text-slate-300 hover:bg-slate-800 flex items-center gap-2">
                 <LogOut size={16} /> Log out
               </button>
             </div>
-            <div className="border-b border-slate-800/70" />
           </header>
         )}
         {renderContent()}
       </main>
 
       {view === 'MARKETS' && (
-        <BetSlip selection={betSelection} onClear={onClearBet} onPlaceBet={onPlaceBet} balance={balance} />
+        <BetSlip
+          selection={betSelection}
+          parlaySelections={parlaySelections}
+          onClear={onClearBet}
+          onPlaceBet={onPlaceBet}
+          balance={balance}
+        />
       )}
     </div>
   );

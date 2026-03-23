@@ -43,6 +43,7 @@ const App: React.FC = () => {
       balance={dashboard.betting.balance}
       activeBets={dashboard.betting.activeBets}
       betSelection={dashboard.betting.betSelection}
+      parlaySelections={dashboard.betting.parlaySelections}
       dailyBonusAvailable={dashboard.betting.dailyBonusAvailable}
       bonusMessage={dashboard.betting.bonusMessage}
       view={dashboard.view}
