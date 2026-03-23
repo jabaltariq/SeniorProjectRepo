@@ -1,43 +1,54 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
-import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT, BONUS_STORAGE_KEY } from '../models/constants';
+import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT } from '../models/constants';
 import { addBet, changeUserMoney, claimedDaily, getUserMoney, listenForChange } from '@/services/dbOps';
 
 /**
  * Balance, placed bets, and bet selection. Used by DashboardView.
- * Loads balance from Firestore and syncs via listenForChange.
+ * Loads balance from Firestore and re-subscribes whenever the active user changes.
  */
-export function useBettingViewModel() {
+export function useBettingViewModel(userEmail: string | null) {
   const [balance, setBalance] = useState<number>(() => {
-    const m = localStorage.getItem('userMoney');
-    return m ? parseInt(m, 10) : 0;
+    const stored = localStorage.getItem('userMoney');
+    const parsed = stored ? Number(stored) : NaN;
+    return Number.isFinite(parsed) ? parsed : INITIAL_BALANCE;
   });
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
   const [betSelection, setBetSelection] = useState<{ market: Market; option: MarketOption } | null>(null);
-  const [dailyBonusAvailable, setDailyBonusAvailable] = useState(() => {
-    return localStorage.getItem('hasDailyBonus') === 'true';
+  const [dailyBonusAvailable, setDailyBonusAvailable] = useState<boolean>(() => {
+    const stored = localStorage.getItem('hasDailyBonus');
+    return stored == null ? true : stored === 'true';
   });
   const [bonusMessage, setBonusMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    // Reset local/transient state whenever account changes.
+    setActiveBets([]);
+    setBetSelection(null);
+    setBonusMessage(null);
+
     const uid = localStorage.getItem('uid');
-    if (!uid) return;
+    if (!uid) {
+      setBalance(INITIAL_BALANCE);
+      setDailyBonusAvailable(true);
+      return;
+    }
 
     getUserMoney(uid).then((money) => {
-      if (money != null && !isNaN(money)) {
+      if (money != null && Number.isFinite(money)) {
         setBalance(money);
       }
     });
 
-    const unsub = listenForChange(uid, ({ money, hasDailyBonus }) => {
+    return listenForChange(uid, ({ money, hasDailyBonus }) => {
       setBalance(money);
       setDailyBonusAvailable(hasDailyBonus);
     });
-    return unsub;
-  }, []);
+  }, [userEmail]);
 
   const handlePlaceBet = useCallback((stake: number) => {
     if (!betSelection) return;
+
     const uid = localStorage.getItem('uid');
     if (!uid) return;
 
@@ -52,8 +63,8 @@ export function useBettingViewModel() {
       placedAt: new Date()
     };
 
-    addBet(uid, newBet);
-    changeUserMoney(uid, -stake).then(() => {
+    void addBet(uid, newBet);
+    void changeUserMoney(uid, -stake).then(() => {
       setBalance((prev) => prev - stake);
     });
     setActiveBets((prev) => [newBet, ...prev]);
@@ -61,7 +72,7 @@ export function useBettingViewModel() {
   }, [betSelection]);
 
   const handleDailyBonus = useCallback(() => {
-    if (localStorage.getItem('hasDailyBonus') !== 'true') {
+    if (!dailyBonusAvailable) {
       setBonusMessage('Already claimed! Come back tomorrow for more.');
       setTimeout(() => setBonusMessage(null), 3000);
       return;
@@ -71,14 +82,15 @@ export function useBettingViewModel() {
     if (!uid) return;
 
     setDailyBonusAvailable(false);
-    changeUserMoney(uid, DAILY_BONUS_AMOUNT).then(() => {
+    localStorage.setItem('hasDailyBonus', 'false');
+
+    void changeUserMoney(uid, DAILY_BONUS_AMOUNT).then(() => {
       setBalance((prev) => prev + DAILY_BONUS_AMOUNT);
       setBonusMessage(`+$${DAILY_BONUS_AMOUNT} added to your wallet!`);
     });
-    localStorage.setItem('hasDailyBonus', 'false');
-    claimedDaily(uid);
+    void claimedDaily(uid);
     setTimeout(() => setBonusMessage(null), 3000);
-  }, []);
+  }, [dailyBonusAvailable]);
 
   const clearBetSelection = useCallback(() => setBetSelection(null), []);
 

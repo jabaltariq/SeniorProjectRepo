@@ -8,15 +8,16 @@ import { MOCK_LEADERBOARD, MOCK_FRIENDS, MOCK_ACTIVITY } from '../models/constan
  * Composes betting + markets + auth for DashboardView.
  * view = which tab: MARKETS | HISTORY | LEADERBOARD | SOCIAL
  */
-export type DashboardView = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
+export type DashboardView = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'SETTINGS';
 
 interface AuthViewModel {
   userInitials: string;
+  userEmail?: string | null;
   logout: () => void;
 }
 
 export function useDashboardViewModel(auth: AuthViewModel) {
-  const betting = useBettingViewModel();
+  const betting = useBettingViewModel(auth.userEmail ?? null);
   const markets = useMarketsViewModel();
 
   const [view, setView] = useState<DashboardView>('MARKETS');

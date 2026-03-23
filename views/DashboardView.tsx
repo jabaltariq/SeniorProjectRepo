@@ -1,5 +1,4 @@
-import React, {useEffect} from 'react';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -16,7 +15,7 @@ import {
   RefreshCw,
   AlertCircle,
   LogOut,
-  Settings,
+  User,
 } from 'lucide-react';
 import type { Market, MarketOption, Bet } from '../models';
 import { MarketCard } from '../components/MarketCard';
@@ -24,17 +23,18 @@ import { BetSlip } from '../components/BetSlip';
 import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import { SettingsView } from './SettingsView';
+import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
-import {getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 
-type DashboardViewType = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
+type DashboardViewType = 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'SETTINGS';
 
 function pathToView(pathname: string): DashboardViewType {
   // React Router v6 strips basename from pathname, so we get e.g. "/friends" not "/bethub/friends"
   const segment = (pathname.replace(/^\/bethub\/?/, '').replace(/^\//, '') || 'markets').split('/')[0] || 'markets';
   switch (segment) {
-    case 'profile': return 'SETTINGS';
+    case 'profile': return 'PROFILE';
+    case 'settings': return 'SETTINGS';
     case 'friends': return 'SOCIAL';
     case 'leaderboard': return 'LEADERBOARD';
     case 'history': return 'HISTORY';
@@ -76,10 +76,8 @@ interface DashboardViewProps {
   onChallenge: (friend: Friend) => void;
 }
 
-var localBets = await getBets(localStorage.getItem("uid"))
-
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
-  var {
+  const {
     balance,
     betSelection,
     dailyBonusAvailable,
@@ -114,25 +112,27 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const navigate = useNavigate();
   const view = pathToView(location.pathname);
 
+  useEffect(() => {
+    if (view === 'MARKETS') {
+      onRetryMarkets();
+    }
+  }, [view, onRetryMarkets]);
+
   const renderContent = () => {
-    useEffect(() => {
-
-
-      // Listen for changes going to the database. Also genuinely one of the most cancerous things I've ever written.
-      listenForChange(localStorage.getItem("uid"))
-      async function fetchData() {
-        localStorage.setItem("userMoney", String(await getUserMoney(localStorage.getItem("uid"))))
-      }
-      fetchData();
-
-
-    }, []);
-
     switch (view) {
       case 'LEADERBOARD':
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} />;
+      case 'PROFILE':
+        return (
+          <ProfileView
+            userInitials={userInitials}
+            userEmail={userEmail}
+            balance={balance}
+            activeBetsCount={props.activeBets.length}
+          />
+        );
       case 'SETTINGS':
         return <SettingsView userEmail={userEmail} />;
       case 'HISTORY':
@@ -142,8 +142,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <History className="text-blue-400" size={24} /> Betting History
             </h2>
             <div className="space-y-4">
-              {/*props.activeBets.length*/ localBets.length > 0 ? (
-                /*props.activeBets*/ localBets.map(bet => (
+              {props.activeBets.length > 0 ? (
+                props.activeBets.map(bet => (
                   <div key={bet.id} className="glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all">
                     <div className="flex justify-between items-start mb-4">
                       <div>
@@ -295,8 +295,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <History size={24} />
           </NavLink>
-          <NavLink to="/profile" title="Settings" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-            <Settings size={24} />
+          <NavLink to="/profile" title="Profile" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+            <User size={24} />
           </NavLink>
         </div>
         <div className="hidden lg:mt-auto lg:block">
@@ -304,7 +304,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink
               to="/profile"
               className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
-              title="Settings"
+              title="Profile"
             >
               <span className="text-xs font-bold">{userInitials}</span>
             </NavLink>
@@ -315,7 +315,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         </div>
       </nav>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-8">
+      <main className="flex-1 min-w-0 w-full overflow-y-auto custom-scrollbar p-4 lg:p-8">
         <header className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
@@ -330,7 +330,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Wallet Balance</p>
-                <p className="text-xl font-black text-green-400">${localStorage.getItem("userMoney")}</p>
+                <p className="text-xl font-black text-green-400">${balance.toLocaleString()}</p>
               </div>
             </div>
             <button
