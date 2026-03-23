@@ -1,6 +1,8 @@
 import type {LeaderboardEntry, Friend, SocialActivity, Bet} from './index';
 
 import {initializeApp} from "firebase/app";
+import {getTopUsers} from "@/services/dbOps.ts";
+import {getFirestore} from "firebase/firestore";
 export const INITIAL_BALANCE = 10000;
 export const DAILY_BONUS_AMOUNT = 500;
 export const BONUS_STORAGE_KEY = 'bethub_last_bonus_claim';
@@ -19,14 +21,18 @@ export const FIREBASE_CONFIG = {
 
 export var APP = initializeApp(FIREBASE_CONFIG)
 
-export const MOCK_LEADERBOARD: LeaderboardEntry[] = [
+/*export const MOCK_LEADERBOARD: LeaderboardEntry[] = [
   { id: 'l1', name: 'CryptoWhale_99', avatar: 'CW', netWorth: 1450200, winRate: 72, rank: 1 },
   { id: 'l2', name: 'SharkBait', avatar: 'SB', netWorth: 980450, winRate: 68, rank: 2 },
   { id: 'l3', name: 'OddsMaster', avatar: 'OM', netWorth: 850000, winRate: 65, rank: 3 },
   { id: 'l4', name: 'LukaMagic', avatar: 'LM', netWorth: 420000, winRate: 58, rank: 4 },
   { id: 'l5', name: 'BettingBot_01', avatar: 'BB', netWorth: 310500, winRate: 91, rank: 5 },
   { id: 'l6', name: 'You (JohnDoe)', avatar: 'JD', netWorth: 10000, winRate: 0, rank: 1422, isCurrentUser: true },
-];
+];*/
+
+export const db = getFirestore(APP);
+
+export const MOCK_LEADERBOARD: LeaderboardEntry[] = await getTopUsers()
 
 export const MOCK_FRIENDS: Friend[] = [
   { id: 'f1', name: 'Sarah_Spin', avatar: 'SS', status: 'online', lastActive: 'Now', privacyEnabled: false },

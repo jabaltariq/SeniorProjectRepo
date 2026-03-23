@@ -12,7 +12,7 @@ export function useAuthFormViewModel(mode: AuthMode, onSuccess: () => void) {
   const [loading, setLoading] = useState(false);
 
   const submit = useCallback(
-    async (email: string, password: string, confirmPassword?: string) => {
+    async (email: string, password: string, confirmPassword?: string, username? : string) => {
       setError(null);
       setLoading(true);
       try {
@@ -20,7 +20,7 @@ export function useAuthFormViewModel(mode: AuthMode, onSuccess: () => void) {
           // Signup only: validate passwords match
           throw new Error('Passwords do not match');
         }
-        const result = mode === 'login' ? await login(email, password) : await signUp(email, password);
+        const result = mode === 'login' ? await login(email, password) : await signUp(email, password, username);
         if (result.success) onSuccess(); // triggers useAuthViewModel -> setAuthView(null)
         else throw new Error(result.error ?? `${mode === 'login' ? 'Login' : 'Sign up'} failed`);
       } catch (err) {

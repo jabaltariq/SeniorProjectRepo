@@ -1,7 +1,9 @@
+
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { getBets, getLastDaily, getUserMoney, setNewDaily, setUserMoney } from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
 import { Bet } from "@/models";
+
 
 const SESSION_KEY = 'bethub_session';
 let userEmail = '';
@@ -16,7 +18,7 @@ export interface User {
   claimTime : string;
 }
 
-export async function signUp(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+export async function signUp(email: string, password: string, username : string): Promise<{ success: boolean; error?: string }> {
   const trimmed = email.trim().toLowerCase();
 
   if (!trimmed || !password) {
@@ -41,6 +43,7 @@ export async function signUp(email: string, password: string): Promise<{ success
 
     console.log("Logged in user with the following credentials:");
     console.log("ID: " + userId);
+
     console.log("Email: " + userEmail);
     console.log("Total money: " + userMoney);
     setSession(trimmed);

@@ -5,7 +5,7 @@ import { AuthInput } from '../components/AuthInput';
 
 interface SignUpViewProps {
   onSwitchToLogin: () => void;
-  onSubmit: (email: string, password: string, confirmPassword: string) => void;
+  onSubmit: (email: string, password: string, confirmPassword: string, username : string) => void;
   error: string | null;
   loading: boolean;
 }
@@ -19,10 +19,11 @@ export const SignUpView: React.FC<SignUpViewProps> = ({
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
+  const [username, setUsername] = React.useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(email, password, confirmPassword);
+    onSubmit(email, password, confirmPassword, username);
   };
 
   return (
@@ -33,7 +34,16 @@ export const SignUpView: React.FC<SignUpViewProps> = ({
             {error}
           </div>
         )}
+
         <div className="space-y-4">
+          <AuthInput
+              label="Username"
+              type="username"
+              value={username}
+              onChange={setUsername}
+              placeholder="YourUsername"
+              Icon={Mail}
+          />
           <AuthInput
             label="Email"
             type="email"
