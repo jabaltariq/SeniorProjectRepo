@@ -29,9 +29,9 @@ import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
+import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
-import {getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
@@ -94,7 +94,7 @@ interface DashboardViewProps {
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
-  var {
+  const {
     balance,
     betSelection,
     parlaySelections,
@@ -269,6 +269,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} />;
+      case 'PROFILE':
+        return (
+          <ProfileView
+            userInitials={userInitials}
+            userEmail={userEmail}
+            balance={balance}
+            activeBetsCount={props.activeBets.length}
+          />
+        );
       case 'SETTINGS':
         return <SettingsView userEmail={userEmail} />;
       case 'HISTORY':
@@ -278,8 +287,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <History className="text-blue-400" size={24} /> Betting History
             </h2>
             <div className="space-y-4">
-              {/*props.activeBets.length*/ localBets.length > 0 ? (
-                /*props.activeBets*/ localBets.map(bet => (
+              {props.activeBets.length > 0 ? (
+                props.activeBets.map(bet => (
                   <div key={bet.id} className="glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all">
                     <div className="flex justify-between items-start mb-4">
                       <div>
@@ -652,8 +661,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
             <History size={24} />
           </NavLink>
-          <NavLink to="/profile" title="Settings" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-            <Settings size={24} />
+          <NavLink to="/profile" title="Profile" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+            <User size={24} />
           </NavLink>
         </div>
         <div className="hidden lg:mt-auto lg:block">
@@ -661,7 +670,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink
               to="/profile"
               className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
-              title="Settings"
+              title="Profile"
             >
               <span className="text-xs font-bold">{userInitials}</span>
             </NavLink>

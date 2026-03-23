@@ -82,16 +82,11 @@ app.use('/api/sports*', async (req, res) => {
   }
 });
 
-// Serve built React app in production
+// Serve built React app at /bethub (matches Vite base)
 const distPath = join(__dirname, '..', 'dist');
-app.use(express.static(distPath));
-app.get('*', (req, res, next) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(join(distPath, 'index.html'));
-  } else {
-    next();
-  }
-});
+app.use('/bethub', express.static(distPath));
+app.use('/bethub', (req, res) => res.sendFile(join(distPath, 'index.html')));
+app.get('/', (req, res) => res.redirect('/bethub/'));
 
 app.listen(PORT, () => {
   console.log(`BetHub API running on http://localhost:${PORT}`);

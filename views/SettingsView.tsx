@@ -1,4 +1,5 @@
 import React from 'react';
+import { NavLink } from 'react-router-dom';
 import {
   User,
   Bell,
@@ -7,6 +8,7 @@ import {
   Lock,
   Globe,
   ChevronRight,
+  ChevronLeft,
   Mail,
 } from 'lucide-react';
 
@@ -17,6 +19,12 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail }) => {
   return (
     <div className="animate-in fade-in duration-500 max-w-2xl">
+      <NavLink
+        to="/profile"
+        className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 mb-6 transition-colors"
+      >
+        <ChevronLeft size={18} /> Back to profile
+      </NavLink>
       <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
         <User className="text-blue-400" size={24} /> Settings
       </h2>

@@ -12,6 +12,7 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "dotenv": "^17.3.1",
     "express": "^4.21.0",
     "firebase": "^12.9.0",
     "lucide-react": "^0.563.0",
