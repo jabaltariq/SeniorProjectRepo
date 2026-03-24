@@ -29,6 +29,26 @@ interface OddsApiEvent {
   bookmakers: OddsApiBookmaker[];
 }
 
+function getMockSteelersRavensMarket(): Market {
+  return {
+    id: 'mock-nfl-steelers-ravens',
+    title: 'Pittsburgh Steelers @ Baltimore Ravens (MOCK)',
+    subtitle: 'NFL (MOCK)',
+    category: 'Football',
+    type: MarketType.SPORTS,
+    status: 'UPCOMING',
+    startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    options: [
+      { id: 'mock-h2h-steelers', label: 'Pittsburgh Steelers', odds: 2.2, marketKey: 'h2h' },
+      { id: 'mock-h2h-ravens', label: 'Baltimore Ravens', odds: 1.72, marketKey: 'h2h' },
+      { id: 'mock-spread-steelers', label: 'Pittsburgh Steelers +3.5', odds: 1.91, marketKey: 'spreads' },
+      { id: 'mock-spread-ravens', label: 'Baltimore Ravens -3.5', odds: 1.91, marketKey: 'spreads' },
+      { id: 'mock-total-over', label: 'Over 45.5', odds: 1.9, marketKey: 'totals' },
+      { id: 'mock-total-under', label: 'Under 45.5', odds: 1.9, marketKey: 'totals' },
+    ],
+  };
+}
+
 function americanToDecimal(american: number): number {
   if (american >= 100) {
     return 1 + american / 100;
@@ -221,7 +241,7 @@ export async function fetchUpcomingOdds(region = 'us'): Promise<Market[]> {
       }
     }
 
-    return markets;
+    return [getMockSteelersRavensMarket(), ...markets];
   })();
 
   try {
