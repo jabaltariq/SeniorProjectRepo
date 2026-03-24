@@ -1,7 +1,15 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
 import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT } from '../models/constants';
-import { placeSingleBet, changeUserMoney, claimedDaily, getBets, getUserMoney, listenForChange } from '@/services/dbOps';
+import {
+  placeSingleBet,
+  changeUserMoney,
+  claimedDaily,
+  getBets,
+  getUserMoney,
+  listenForChange,
+  addBet
+} from '@/services/dbOps';
 
 /**
  * Balance, placed bets, and bet selection. Used by DashboardView.
