@@ -69,9 +69,7 @@ export function useBettingViewModel() {
     };
 
     void addBet(uid, newBet);
-    void changeUserMoney(uid, -stake).then(() => {
-      setBalance((prev) => prev - stake);
-    });
+    void changeUserMoney(uid, -stake);
     setActiveBets((prev) => [newBet, ...prev]);
     setBetSelection(null);
   }, [betSelection]);
@@ -90,7 +88,6 @@ export function useBettingViewModel() {
     localStorage.setItem('hasDailyBonus', 'false');
 
     void changeUserMoney(uid, DAILY_BONUS_AMOUNT).then(() => {
-      setBalance((prev) => prev + DAILY_BONUS_AMOUNT);
       setBonusMessage(`+$${DAILY_BONUS_AMOUNT} added to your wallet!`);
     });
     void claimedDaily(uid);
