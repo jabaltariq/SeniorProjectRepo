@@ -4,6 +4,7 @@ import {
   getBets,
   getLastDaily,
   getUserMoney,
+  normalizeUserInfoDoc,
   resetRatio,
   setNewDaily,
   setUserMoney,
@@ -68,7 +69,10 @@ export async function login(email: string, password: string): Promise<{ success:
     const userCredential = await signInWithEmailAndPassword(auth, trimmed, password);
     userEmail = (userCredential.user.email ?? trimmed).toLowerCase();
     userId = userCredential.user.uid;
-    userMoney = (await getUserMoney(userCredential.user.uid)) ?? 0;
+
+    // Auto-heal malformed legacy userInfo fields before reading session data.
+    const normalized = await normalizeUserInfoDoc(userCredential.user.uid);
+    userMoney = normalized?.money ?? (await getUserMoney(userCredential.user.uid)) ?? 0;
 
     const lastClaim = await getLastDaily(userCredential.user.uid);
     const now = new Date(Date.now());

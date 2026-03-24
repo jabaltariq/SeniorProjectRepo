@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -33,7 +33,6 @@ import { SettingsView } from './SettingsView';
 import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
-import {getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
@@ -83,7 +82,7 @@ interface DashboardViewProps {
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
-  onPlaceBet: (stake: number) => void;
+  onPlaceBet: (stake: number, betType?: 'single' | 'parlay') => void;
   onClearBet: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
   onDailyBonus: () => void;
@@ -133,7 +132,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const location = useLocation();
   const navigate = useNavigate();
   const view = pathToView(location.pathname);
-  const [localBets, setLocalBets] = useState<Bet[]>([]);
   const [marketLayoutMode, setMarketLayoutMode] = useState<'DISCOVER' | 'ALL_LEAGUES'>('DISCOVER');
 
   const splitTeams = (title: string) => {
@@ -234,32 +232,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const displayBalance = `$${Math.max(0, safeBalance).toFixed(2)}`;
   const isOptionSelected = (market: Market, option: MarketOption) =>
     parlaySelections.some((sel) => sel.market.id === market.id && sel.option.id === option.id);
-
-  useEffect(() => {
-    const uid = localStorage.getItem('uid');
-    if (!uid) return;
-
-    const unsubscribe = listenForChange(uid);
-
-    (async () => {
-      try {
-        const money = await getUserMoney(uid);
-        if (money != null) localStorage.setItem('userMoney', String(money));
-      } catch {
-        /* ignore */
-      }
-      try {
-        const bets = await getBets(uid);
-        setLocalBets(bets);
-      } catch {
-        /* ignore */
-      }
-    })();
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
 
   const renderContent = () => {
     switch (view) {
@@ -746,6 +718,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         <BetSlip
           selection={betSelection}
           parlaySelections={parlaySelections}
+          activeBets={props.activeBets}
           onClear={onClearBet}
           onPlaceBet={onPlaceBet}
           onSelectBet={onSelectBet}
