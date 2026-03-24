@@ -181,8 +181,8 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** One market type per request keeps Odds API quota cost at 1 credit per region (see their docs). */
-const ODDS_MARKETS_PARAM = 'markets=h2h&oddsFormat=decimal';
+/** Match dashboard columns: moneyline, spread, total (Odds API usage scales with markets requested). */
+const ODDS_MARKETS_PARAM = 'markets=h2h,spreads,totals&oddsFormat=decimal';
 
 async function fetchOddsForSport(sportKey: string, region: string): Promise<OddsApiEvent[]> {
   const url = sportKey === 'upcoming'
