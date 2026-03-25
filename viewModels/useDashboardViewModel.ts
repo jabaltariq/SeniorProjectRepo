@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import type {Friend, LeaderboardEntry, SocialActivity} from '../models';
+import type {Bet, Friend, LeaderboardEntry, SocialActivity} from '../models';
 import { useBettingViewModel } from './useBettingViewModel';
 import { useMarketsViewModel } from './useMarketsViewModel';
 import { MOCK_FRIENDS, MOCK_ACTIVITY } from '../models/constants';
@@ -22,6 +22,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
   const markets = useMarketsViewModel();
 
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [betList, setBetList] = useState<Bet[]>([]);
   const [activities, setActivities] = useState<SocialActivity[]>([])
   const [view, setView] = useState<DashboardView>('MARKETS');
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
@@ -32,6 +33,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     })
     loadCommunityActivity().then((list) => {
       setActivities(list)
+      setBetList(betList)
     })
     console.log(friends)
     let cancelled = false;
@@ -56,6 +58,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
   }, []);
 
   return {
+    betList,
     auth,
     betting,
     markets,

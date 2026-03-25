@@ -3,8 +3,10 @@ import { db } from "@/models/constants.ts";
 import {Bet, Friend, LeaderboardEntry, SocialActivity} from "@/models";
 import firebase from "firebase/compat/app";
 import DocumentReference = firebase.firestore.DocumentReference;
+import { betList } from "@/services/authService.ts";
 export var currBets = new Array<Bet>;
 
+export var allBets = new Array<Bet>;
 /**
  * Sets a specified user's username in Firestore
  * @param uid A user's Firebase Authentication ID.
@@ -284,10 +286,6 @@ export async function addFriend(name: string, currUid: string) {
             friends: friendsList
         }, {merge: true});
     }
-
-
-
-
 }
 
 export async function loadCommunityActivity() : Promise<SocialActivity[]> {
@@ -321,9 +319,21 @@ export async function loadCommunityActivity() : Promise<SocialActivity[]> {
             target: data["marketTitle"],
             timestamp: ""
         }
+
+        const newBet : Bet = {
+            id: docSnap.id,
+            marketId: data["marketId"],
+            marketTitle: data["marketTitle"],
+            optionLabel: data["optionLabel"],
+            stake: data["stake"],
+            odds: data["odds"],
+            potentialPayout: data["potentialPayout"],
+            placedAt: data["placedAt"]
+        }
+        betList.push(newBet)
         socialActivityList.push(newSocialActivity)
     }
-    console.log(socialActivityList)
+    console.log(betList)
     return socialActivityList
 }
 
