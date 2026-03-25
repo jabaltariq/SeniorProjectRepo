@@ -45,10 +45,11 @@ export function useBettingViewModel() {
       }
     });
 
+    /*
     return listenForChange(uid, ({ money, hasDailyBonus }) => {
       setBalance(money);
       setDailyBonusAvailable(hasDailyBonus);
-    });
+    });*/
   }, [localStorage.getItem("userEmail")]);
 
   const handlePlaceBet = useCallback((stake: number) => {

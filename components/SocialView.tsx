@@ -1,7 +1,8 @@
 
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import { Friend, SocialActivity } from '../models';
-import { Users, Activity, Swords, Circle, ShieldCheck, ShieldOff } from 'lucide-react';
+import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search} from 'lucide-react';
+import {addFriend} from "@/services/dbOps.ts";
 
 interface SocialViewProps {
   friends: Friend[];
@@ -10,6 +11,7 @@ interface SocialViewProps {
 }
 
 export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onChallenge }) => {
+  const [searchQuery, onSearchChange] = useState("")
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 animate-in fade-in slide-in-from-right-4 duration-500">
       {/* Friends List */}
@@ -46,9 +48,21 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
               </button>
             </div>
           ))}
-          <button className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
+          <button
+              onClick={() => addFriend(searchQuery, localStorage.getItem("uid"))}
+              className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
             + Add Friend
           </button>
+          <div className="relative w-full max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+            <input
+                type="text"
+                placeholder="Add friend by username..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm"
+            />
+          </div>
         </div>
 
         <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10">
