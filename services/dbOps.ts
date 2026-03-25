@@ -275,9 +275,17 @@ export async function addFriend(name: string, currUid: string) {
     const docRef = doc(db, "userInfo", currUid);
     const docSnap = await getDoc(docRef);
 
+    var friendsList : String[]
     if (docSnap.exists()) {
         const data = docSnap.data();
-        const friendsList : string[] = data["friends"];
+        if (data["friends"] == undefined) {
+            friendsList = []
+        }
+        else {
+            friendsList = data["friends"];
+        }
+
+
         if (friendsList.includes(friendId)) {
             return;
         }
@@ -346,6 +354,9 @@ export async function getFriends(uid : string) : Promise<Friend[]> {
     if (documentSnapshot.exists()) {
         const data = documentSnapshot.data();
         friendsListAsString = data["friends"];
+        if (data["friends"] == undefined) {
+
+        }
         for (const friend of friendsListAsString) {
             const friendDocumentReference = doc(db, "userInfo", friend);
             const friendDocumentSnapshot = await getDoc(friendDocumentReference);
