@@ -34,6 +34,8 @@ import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 
+import {getBets, getUserMoney, listenForChange, friendsList} from "@/services/dbOps.ts";
+
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
 function pathToView(pathname: string): DashboardViewType {

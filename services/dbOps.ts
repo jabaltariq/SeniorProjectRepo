@@ -1,7 +1,8 @@
-import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, Timestamp, runTransaction, deleteField } from "firebase/firestore";
+import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, Timestamp, DocumentData, FieldValue} from "firebase/firestore";
 import { db } from "@/models/constants.ts";
-import { Bet, LeaderboardEntry } from "@/models";
-
+import {Bet, Friend, LeaderboardEntry} from "@/models";
+import firebase from "firebase/compat/app";
+import DocumentReference = firebase.firestore.DocumentReference;
 export var currBets = new Array<Bet>;
 
 /**
@@ -10,10 +11,10 @@ export var currBets = new Array<Bet>;
  * @param name The new username that the user will have in Firestore.
  * @author Aidan Rodriguez
  */
-export async function setUserName(uid : string, name : string) {
+export async function setUserName(uid: string, name: string) {
     await setDoc(doc(db, "userInfo", uid), {
         name: name
-    }, { merge: true })
+    }, {merge: true})
 }
 
 /**
@@ -25,7 +26,7 @@ export async function resetRatio(uid: string) {
     await setDoc(doc(db, "userInfo", uid), {
         wins: 0,
         losses: 0
-    }, { merge: true })
+    }, {merge: true})
 }
 
 /**
@@ -34,7 +35,7 @@ export async function resetRatio(uid: string) {
  * @return An array of two numbers - index 0 is the user's wins, while index 1 is the user's losses.
  * @author Aidan Rodriguez
  */
-export async function getUserRatio(uid: string) : Promise<number[]> {
+export async function getUserRatio(uid: string): Promise<number[]> {
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);
 
@@ -52,7 +53,7 @@ export async function getUserRatio(uid: string) : Promise<number[]> {
  * @param uid A user's Firebase Authentication ID.
  * @author Aidan Rodriguez
  */
-export async function getUserMoney(uid : string) : Promise<number> {
+export async function getUserMoney(uid: string): Promise<number> {
 
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);
@@ -75,10 +76,10 @@ export async function getUserMoney(uid : string) : Promise<number> {
  * @param amount The new amount that the user will have in Firestore.
  * @author Aidan Rodriguez
  */
-export async function setUserMoney(uid : string, amount : number) {
+export async function setUserMoney(uid: string, amount: number) {
     await setDoc(doc(db, "userInfo", uid), {
         money: amount
-    }, { merge : true});
+    }, {merge: true});
 }
 
 /**
@@ -86,21 +87,21 @@ export async function setUserMoney(uid : string, amount : number) {
  * @param uid A user's Firebase Authentication ID.
  * @author Aidan Rodriguez
  */
-export async function claimedDaily(uid : string) {
+export async function claimedDaily(uid: string) {
     await setDoc(doc(db, "userInfo", uid), {
         lastClaim: Timestamp.now()
-    }, { merge: true})
+    }, {merge: true})
 }
 
 /**
  * Sets a user's last claim to 1/1/1900, used in the creation of a new user.
  * @param uid A user's Firebase Authentication ID.
  */
-export async function setNewDaily(uid : string) {
+export async function setNewDaily(uid: string) {
     var beginningOfTime = new Date(1900, 1, 1)
     await setDoc(doc(db, "userInfo", uid), {
         lastClaim: Timestamp.fromDate(beginningOfTime)
-    }, { merge: true })
+    }, {merge: true})
 }
 
 /**
@@ -108,12 +109,12 @@ export async function setNewDaily(uid : string) {
  * @param uid A user's Firebase Authentication ID.
  * @param amount The amount that will be added to the user's money (or in the case of a negative number, subtracted).
  */
-export async function changeUserMoney(uid : string, amount : number) {
+export async function changeUserMoney(uid: string, amount: number) {
     const newMoney = ((await getUserMoney(uid)) + amount);
     await setDoc(doc(db, "userInfo", uid), {
         money: newMoney
 
-    }, { merge: true });
+    }, {merge: true});
 }
 
 export type ListenForChangeCallback = (data: { money: number; hasDailyBonus: boolean }) => void;
@@ -142,7 +143,7 @@ export function listenForChange(uid: string, onUpdate?: ListenForChangeCallback)
             : true;
         localStorage.setItem("hasDailyBonus", hasDailyBonus ? "true" : "false");
 
-        onUpdate?.({ money, hasDailyBonus });
+        onUpdate?.({money, hasDailyBonus});
     });
 }
 
@@ -301,12 +302,12 @@ export async function placeSingleBet(uid: string, bet: Bet): Promise<PlaceSingle
  * returned. It should be noted that this Array is returned as a Promise.
  * @author Aidan Rodriguez
  */
-export async function getBets(uid: string) : Promise<Bet[]> {
+export async function getBets(uid: string): Promise<Bet[]> {
     var betList = new Array()
     const querySnapshot = await getDocs(collection(db, "bets"));
     querySnapshot.forEach((doc) => {
         if (doc.data().userID == uid) {
-            const validBet : Bet = {
+            const validBet: Bet = {
                 id: doc.id,
                 marketId: doc.data().marketId,
                 marketTitle: doc.data().marketTitle,
@@ -329,19 +330,17 @@ export async function getBets(uid: string) : Promise<Bet[]> {
             try {
 
                 betList.push(validBet as Bet)
-            }
-            catch (error) {
+            } catch (error) {
                 console.log(error)
             }
-        }
-        else {
+        } else {
             console.log("Bet was found invalid.")
         }
     })
     return betList
 }
 
-export async function getTopUsers() : Promise<LeaderboardEntry[]> {
+export async function getTopUsers(): Promise<LeaderboardEntry[]> {
     const topUserList: LeaderboardEntry[] = [];
 
     const querySnapshot = await getDocs(collection(db, "userInfo"));
@@ -382,4 +381,70 @@ export async function getTopUsers() : Promise<LeaderboardEntry[]> {
     }
 
     return topUserList;
+}
+
+export async function addFriend(name: string, currUid: string) {
+    const querySnapshot = await getDocs(collection(db, "userInfo"))
+    let data: DocumentData;
+    let friendId : string;
+    for (const docSnap of querySnapshot.docs) {
+        friendId = docSnap.id
+        data = docSnap.data();
+        if (data["name"] == name) {
+            console.log("found user")
+            break;
+        }
+    }
+
+    const docRef = doc(db, "userInfo", currUid);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+        const data = docSnap.data();
+        const friendsList : string[] = data["friends"];
+        if (friendsList.includes(friendId)) {
+            console.log("user is already part of friend list")
+            return;
+        }
+        friendsList.push(friendId)
+        await setDoc(doc(db, "userInfo", currUid), {
+            friends: friendsList
+        }, {merge: true});
+    }
+
+
+
+
+}
+export async function getFriends(uid : string) : Promise<Friend[]> {
+    const documentReference = doc(db, "userInfo", uid);
+    const documentSnapshot = await getDoc(documentReference);
+
+    var friendsListAsString : string[] = []
+    var friendsList : Friend[] = []
+    if (documentSnapshot.exists()) {
+        const data = documentSnapshot.data();
+        friendsListAsString = data["friends"];
+        for (const friend of friendsListAsString) {
+            const friendDocumentReference = doc(db, "userInfo", friend);
+            const friendDocumentSnapshot = await getDoc(friendDocumentReference);
+
+            if (friendDocumentSnapshot.exists()) {
+                const friendData = friendDocumentSnapshot.data();
+
+
+                friendsList.push({
+                    id: friend,
+                    name: friendData["name"],
+                    avatar: friendData["name"].slice(0, 2),
+                    status: 'online',
+                    lastActive: "dont care",
+                    privacyEnabled: false
+                })
+                console.log(friendsList)
+                console.log(friendsListAsString)
+            }
+        }
+    }
+    return friendsList;
 }
