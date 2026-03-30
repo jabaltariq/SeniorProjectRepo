@@ -28,26 +28,27 @@ interface OddsApiEvent {
   away_team?: string;
   bookmakers: OddsApiBookmaker[];
 }
-
-function getMockSteelersRavensMarket(): Market {
-  return {
-    id: 'mock-nfl-steelers-ravens',
-    title: 'Pittsburgh Steelers @ Baltimore Ravens (MOCK)',
-    subtitle: 'NFL (MOCK)',
-    category: 'Football',
-    type: MarketType.SPORTS,
-    status: 'UPCOMING',
-    startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    options: [
-      { id: 'mock-h2h-steelers', label: 'Pittsburgh Steelers', odds: 2.2, marketKey: 'h2h' },
-      { id: 'mock-h2h-ravens', label: 'Baltimore Ravens', odds: 1.72, marketKey: 'h2h' },
-      { id: 'mock-spread-steelers', label: 'Pittsburgh Steelers +3.5', odds: 1.91, marketKey: 'spreads' },
-      { id: 'mock-spread-ravens', label: 'Baltimore Ravens -3.5', odds: 1.91, marketKey: 'spreads' },
-      { id: 'mock-total-over', label: 'Over 45.5', odds: 1.9, marketKey: 'totals' },
-      { id: 'mock-total-under', label: 'Under 45.5', odds: 1.9, marketKey: 'totals' },
-    ],
-  };
-}
+//
+// function getMockSteelersRavensMarket(): Market {
+//   return {
+//     id: 'mock-nfl-steelers-ravens',
+//     title: 'Pittsburgh Steelers @ Baltimore Ravens (MOCK)',
+//     subtitle: 'NFL (MOCK)',
+//     category: 'Football',
+//     type: MarketType.SPORTS,
+//     status: 'UPCOMING',
+//
+//     startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+//     options: [
+//       { id: 'mock-h2h-steelers', label: 'Pittsburgh Steelers', odds: 2.2, marketKey: 'h2h' },
+//       { id: 'mock-h2h-ravens', label: 'Baltimore Ravens', odds: 1.72, marketKey: 'h2h' },
+//       { id: 'mock-spread-steelers', label: 'Pittsburgh Steelers +3.5', odds: 1.91, marketKey: 'spreads' },
+//       { id: 'mock-spread-ravens', label: 'Baltimore Ravens -3.5', odds: 1.91, marketKey: 'spreads' },
+//       { id: 'mock-total-over', label: 'Over 45.5', odds: 1.9, marketKey: 'totals' },
+//       { id: 'mock-total-under', label: 'Under 45.5', odds: 1.9, marketKey: 'totals' },
+//     ],
+//   };
+// }
 
 function americanToDecimal(american: number): number {
   if (american >= 100) {
@@ -111,7 +112,7 @@ function sportKeyToLeague(sportKey: string): string {
 function transformEventToMarket(event: OddsApiEvent): Market | null {
   const bookmaker = event.bookmakers?.[0];
   if (!bookmaker) return null;
-  sport_key: event.sport_key
+
 
   const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h' || m.key === 'outrights');
   if (!h2hMarket?.outcomes?.length) return null;
@@ -183,6 +184,7 @@ function transformEventToMarket(event: OddsApiEvent): Market | null {
     status,
     startTime: event.commence_time,
     options,
+    sport_key: event.sport_key,
   };
 }
 

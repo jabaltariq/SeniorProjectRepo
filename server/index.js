@@ -29,7 +29,7 @@ app.use(express.json());
 // Runs every 10 minutes while the server is alive.
 // Uses setInterval instead of node-cron to avoid an extra dependency.
 // First run is delayed 30 s after boot so Firebase Admin has time to init.
-const SETTLEMENT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const SETTLEMENT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 async function runSettlement() {
   try {
