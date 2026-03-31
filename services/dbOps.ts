@@ -62,8 +62,12 @@ export async function getUserMoney(uid: string): Promise<number> {
 
     if (documentSnapshot.exists()) {
         const data = documentSnapshot.data();
-        return data["money"] as number;
-    } else {
+        const rawMoney = data["money"];
+        if (typeof rawMoney === "number" && Number.isFinite(rawMoney)) return rawMoney;
+        const parsed = Number(rawMoney);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+    else {
         return null;
     }
 }
@@ -133,10 +137,11 @@ export function listenForChange(uid: string, onUpdate?: ListenForChangeCallback)
         localStorage.setItem("userMoney", String(money));
 
         const currDate = new Date();
-        const hasDailyBonus = data.lastClaim
-            ? data.lastClaim.toDate().getDate() !== currDate.getDate() ||
-            data.lastClaim.toDate().getMonth() !== currDate.getMonth() ||
-            data.lastClaim.toDate().getFullYear() !== currDate.getFullYear()
+        const claimStamp = data.lastClaim ?? data.LastClaim;
+        const hasDailyBonus = claimStamp
+            ? claimStamp.toDate().getDate() !== currDate.getDate() ||
+              claimStamp.toDate().getMonth() !== currDate.getMonth() ||
+              claimStamp.toDate().getFullYear() !== currDate.getFullYear()
             : true;
         localStorage.setItem("hasDailyBonus", hasDailyBonus ? "true" : "false");
 
@@ -157,10 +162,58 @@ export async function getLastDaily(uid: string) {
 
     if (documentSnapshot.exists()) {
         const data = documentSnapshot.data();
-        return data["lastClaim"] as Timestamp;
+        return (data["lastClaim"] ?? data["LastClaim"]) as Timestamp;
     } else {
         return null;
     }
+}
+
+type NormalizedUserInfo = {
+    money: number;
+    lastClaim: Timestamp;
+    wins: number;
+    losses: number;
+};
+
+/**
+ * Normalizes legacy / malformed userInfo documents.
+ * - Migrates LastClaim -> lastClaim
+ * - Coerces money/wins/losses to finite numbers
+ */
+export async function normalizeUserInfoDoc(uid: string): Promise<NormalizedUserInfo | null> {
+    const userRef = doc(db, "userInfo", uid);
+    const snap = await getDoc(userRef);
+    if (!snap.exists()) return null;
+
+    const data = snap.data();
+    const moneyRaw = data.money;
+    const winsRaw = data.wins;
+    const lossesRaw = data.losses;
+    const lastClaimRaw = data.lastClaim ?? data.LastClaim;
+
+    const money = Number.isFinite(Number(moneyRaw)) ? Number(moneyRaw) : 0;
+    const wins = Number.isFinite(Number(winsRaw)) ? Number(winsRaw) : 0;
+    const losses = Number.isFinite(Number(lossesRaw)) ? Number(lossesRaw) : 0;
+
+    const fallbackDate = new Date(1900, 0, 1);
+    const lastClaim =
+        lastClaimRaw && typeof lastClaimRaw.toDate === "function"
+            ? Timestamp.fromDate(lastClaimRaw.toDate())
+            : Timestamp.fromDate(fallbackDate);
+
+    await setDoc(
+        userRef,
+        {
+            money,
+            wins,
+            losses,
+            lastClaim,
+            LastClaim: deleteField(),
+        },
+        { merge: true }
+    );
+
+    return { money, wins, losses, lastClaim };
 }
 
 /**
@@ -175,12 +228,73 @@ export async function addBet(uid: string, bet: Bet) {
         marketId: bet.marketId,
         marketTitle: bet.marketTitle,
         optionLabel: bet.optionLabel,
+        betType: bet.betType ?? "single",
+        parlayLegs: bet.parlayLegs ?? [],
+        legCount: bet.parlayLegs?.length ?? (bet.betType === "parlay" ? 0 : 1),
         stake: bet.stake,
         odds: bet.odds,
         potentialPayout: bet.potentialPayout,
         placedAt: bet.placedAt
     })
     currBets.push(bet)
+}
+
+export type PlaceSingleBetResult =
+    | { success: true; newBalance: number }
+    | { success: false; error: "USER_NOT_FOUND" | "INVALID_STAKE" | "INSUFFICIENT_FUNDS" | "UNKNOWN" };
+
+/**
+ * Places a single bet and debits funds atomically in Firestore.
+ * This avoids race conditions from separate read/write calls.
+ */
+export async function placeSingleBet(uid: string, bet: Bet): Promise<PlaceSingleBetResult> {
+    if (!Number.isFinite(bet.stake) || bet.stake <= 0) {
+        return { success: false, error: "INVALID_STAKE" };
+    }
+
+    try {
+        const newBalance = await runTransaction(db, async (transaction) => {
+            const userRef = doc(db, "userInfo", uid);
+            const betRef = doc(db, "bets", bet.id);
+
+            const userSnap = await transaction.get(userRef);
+            if (!userSnap.exists()) {
+                throw new Error("USER_NOT_FOUND");
+            }
+
+            const currentMoney = Number(userSnap.data().money) || 0;
+            if (currentMoney < bet.stake) {
+                throw new Error("INSUFFICIENT_FUNDS");
+            }
+
+            const nextMoney = currentMoney - bet.stake;
+
+            transaction.set(betRef, {
+                userID: uid,
+                marketId: bet.marketId,
+                marketTitle: bet.marketTitle,
+                optionLabel: bet.optionLabel,
+                betType: bet.betType ?? "single",
+                parlayLegs: bet.parlayLegs ?? [],
+                legCount: bet.parlayLegs?.length ?? (bet.betType === "parlay" ? 0 : 1),
+                stake: bet.stake,
+                odds: bet.odds,
+                potentialPayout: bet.potentialPayout,
+                placedAt: Timestamp.fromDate(bet.placedAt),
+            });
+            transaction.set(userRef, { money: nextMoney }, { merge: true });
+
+            return nextMoney;
+        });
+
+        currBets.push(bet);
+        return { success: true, newBalance };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message === "USER_NOT_FOUND") return { success: false, error: "USER_NOT_FOUND" };
+        if (message === "INSUFFICIENT_FUNDS") return { success: false, error: "INSUFFICIENT_FUNDS" };
+        return { success: false, error: "UNKNOWN" };
+    }
 }
 
 /**
@@ -200,10 +314,20 @@ export async function getBets(uid: string): Promise<Bet[]> {
                 marketId: doc.data().marketId,
                 marketTitle: doc.data().marketTitle,
                 optionLabel: doc.data().optionLabel,
+                betType: doc.data().betType === "parlay" ? "parlay" : "single",
                 stake: doc.data().stake,
                 odds: doc.data().odds,
                 potentialPayout: doc.data().potentialPayout,
-                placedAt: doc.data().placedAt.toDate()
+                placedAt: doc.data().placedAt.toDate(),
+                parlayLegs: Array.isArray(doc.data().parlayLegs)
+                    ? doc.data().parlayLegs.map((leg: any) => ({
+                        marketId: String(leg.marketId ?? ""),
+                        marketTitle: String(leg.marketTitle ?? ""),
+                        optionId: String(leg.optionId ?? ""),
+                        optionLabel: String(leg.optionLabel ?? ""),
+                        odds: Number(leg.odds) || 0,
+                    }))
+                    : undefined,
             }
             try {
 

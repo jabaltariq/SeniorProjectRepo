@@ -27,10 +27,18 @@ export interface Bet {
   marketId: string;
   marketTitle: string;
   optionLabel: string;
+  betType?: 'single' | 'parlay';
   stake: number;
   odds: number;
   potentialPayout: number;
   placedAt: Date;
+  parlayLegs?: Array<{
+    marketId: string;
+    marketTitle: string;
+    optionId: string;
+    optionLabel: string;
+    odds: number;
+  }>;
 }
 
 export interface LeaderboardEntry {

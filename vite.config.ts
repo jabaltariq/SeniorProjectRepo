@@ -1,6 +1,10 @@
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
+import { fileURLToPath } from 'url';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { loadOddsApiKey } from './lib/loadOddsApiKey.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function addApiKeyProxy(apiKey: string) {
   return (proxy: { on: (event: string, fn: (req: { path?: string }) => void) => void }) => {
@@ -11,9 +15,13 @@ function addApiKeyProxy(apiKey: string) {
   };
 }
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
-  const oddsApiKey = env.ODDS_API_KEY || '';
+export default defineConfig(() => {
+  const oddsApiKey = loadOddsApiKey(__dirname);
+  if (!oddsApiKey && !process.env.VITE_USE_EXPRESS) {
+    console.warn(
+      '\n[BetHub] ODDS_API_KEY is missing or empty. Add it to .env.local in the project root, then restart the dev server.\n'
+    );
+  }
 
   return {
     base: '/bethub/',

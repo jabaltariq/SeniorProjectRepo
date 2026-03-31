@@ -29,6 +29,26 @@ interface OddsApiEvent {
   bookmakers: OddsApiBookmaker[];
 }
 
+function getMockSteelersRavensMarket(): Market {
+  return {
+    id: 'mock-nfl-steelers-ravens',
+    title: 'Pittsburgh Steelers @ Baltimore Ravens (MOCK)',
+    subtitle: 'NFL (MOCK)',
+    category: 'Football',
+    type: MarketType.SPORTS,
+    status: 'UPCOMING',
+    startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    options: [
+      { id: 'mock-h2h-steelers', label: 'Pittsburgh Steelers', odds: 2.2, marketKey: 'h2h' },
+      { id: 'mock-h2h-ravens', label: 'Baltimore Ravens', odds: 1.72, marketKey: 'h2h' },
+      { id: 'mock-spread-steelers', label: 'Pittsburgh Steelers +3.5', odds: 1.91, marketKey: 'spreads' },
+      { id: 'mock-spread-ravens', label: 'Baltimore Ravens -3.5', odds: 1.91, marketKey: 'spreads' },
+      { id: 'mock-total-over', label: 'Over 45.5', odds: 1.9, marketKey: 'totals' },
+      { id: 'mock-total-under', label: 'Under 45.5', odds: 1.9, marketKey: 'totals' },
+    ],
+  };
+}
+
 function americanToDecimal(american: number): number {
   if (american >= 100) {
     return 1 + american / 100;
@@ -165,27 +185,29 @@ function transformEventToMarket(event: OddsApiEvent): Market | null {
   };
 }
 
-const POPULAR_SPORTS = [
-  'upcoming',
-  'basketball_nba',
-  'baseball_mlb',
-  'americanfootball_nfl',
-  'icehockey_nhl',
-  'soccer_england_league1',
-  'soccer_uefa_champions_league',
-];
+/** Odds API sport keys per dashboard tab (ALL uses upcoming only). */
+const SPORT_API_KEYS: Record<string, string[]> = {
+  Football: ['americanfootball_nfl', 'americanfootball_ncaaf'],
+  Basketball: ['basketball_nba', 'basketball_ncaab'],
+  Baseball: ['baseball_mlb'],
+  Hockey: ['icehockey_nhl'],
+  Soccer: ['soccer_england_league1', 'soccer_uefa_champions_league'],
+};
 
-/** Space out Odds API calls — parallel requests hit 429 (Too Many Requests) on free / low tiers. */
+/** Space out Odds API calls — parallel bursts still hit 429 on free / low tiers. */
 const MS_BETWEEN_ODDS_REQUESTS = 1100;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Match dashboard columns: moneyline, spread, total (Odds API usage scales with markets requested). */
+const ODDS_MARKETS_PARAM = 'markets=h2h,spreads,totals&oddsFormat=decimal';
+
 async function fetchOddsForSport(sportKey: string, region: string): Promise<OddsApiEvent[]> {
   const url = sportKey === 'upcoming'
-    ? `${API_BASE}/odds?regions=${region}&markets=h2h,spreads,totals&oddsFormat=decimal`
-    : `${API_BASE}/odds/${sportKey}?regions=${region}&markets=h2h,spreads,totals&oddsFormat=decimal`;
+    ? `${API_BASE}/odds?regions=${region}&${ODDS_MARKETS_PARAM}`
+    : `${API_BASE}/odds/${sportKey}?regions=${region}&${ODDS_MARKETS_PARAM}`;
 
   const load = async (): Promise<Response> => fetch(url);
   let res = await load();
@@ -193,41 +215,72 @@ async function fetchOddsForSport(sportKey: string, region: string): Promise<Odds
     await delay(2500);
     res = await load();
   }
-  if (!res.ok) return [];
-  return res.json();
+
+  const payload: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg =
+      payload &&
+      typeof payload === 'object' &&
+      payload !== null &&
+      'message' in payload &&
+      typeof (payload as { message: unknown }).message === 'string'
+        ? (payload as { message: string }).message
+        : typeof payload === 'string'
+          ? payload
+          : JSON.stringify(payload ?? {}).slice(0, 200);
+    throw new Error(`Odds API ${res.status}: ${msg}`);
+  }
+  if (!Array.isArray(payload)) {
+    throw new Error('Odds API returned an invalid response (expected a JSON array). Is ODDS_API_KEY set?');
+  }
+  return payload;
 }
 
-let upcomingOddsInFlight: Promise<Market[]> | null = null;
+/**
+ * Fetches odds only for the selected dashboard tab (ALL = single upcoming request).
+ */
+export async function fetchMarketsForSportTab(sportTab: string, region = 'us'): Promise<Market[]> {
+  const seen = new Set<string>();
+  const markets: Market[] = [];
+
+  if (sportTab === 'ALL') {
+    const data = await fetchOddsForSport('upcoming', region);
+    for (const event of data) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      const market = transformEventToMarket(event);
+      if (market) markets.push(market);
+    }
+    return markets;
+  }
+
+  const keys = SPORT_API_KEYS[sportTab];
+  if (!keys?.length) return [];
+
+  let lastError: Error | null = null;
+  for (let i = 0; i < keys.length; i++) {
+    if (i > 0) await delay(MS_BETWEEN_ODDS_REQUESTS);
+    try {
+      const data = await fetchOddsForSport(keys[i], region);
+      for (const event of data) {
+        if (seen.has(event.id)) continue;
+        seen.add(event.id);
+        const market = transformEventToMarket(event);
+        if (market) markets.push(market);
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
+  if (markets.length === 0 && lastError) {
+    throw lastError;
+  }
+
+  return markets;
+}
 
 export async function fetchUpcomingOdds(region = 'us'): Promise<Market[]> {
-  if (upcomingOddsInFlight) return upcomingOddsInFlight;
-
-  upcomingOddsInFlight = (async () => {
-    const seen = new Set<string>();
-    const markets: Market[] = [];
-
-    for (let i = 0; i < POPULAR_SPORTS.length; i++) {
-      if (i > 0) await delay(MS_BETWEEN_ODDS_REQUESTS);
-      try {
-        const data = await fetchOddsForSport(POPULAR_SPORTS[i], region);
-        for (const event of data) {
-          if (seen.has(event.id)) continue;
-          seen.add(event.id);
-          const market = transformEventToMarket(event);
-          if (market) markets.push(market);
-        }
-      } catch {
-        /* skip failed sport batch */
-      }
-    }
-
-    return markets;
-  })();
-
-  try {
-    return await upcomingOddsInFlight;
-  } finally {
-    upcomingOddsInFlight = null;
-  }
+  return fetchMarketsForSportTab('ALL', region);
 }
 

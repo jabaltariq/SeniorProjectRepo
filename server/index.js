@@ -2,16 +2,21 @@
  * Express backend for BetHub
  * Handles auth and proxies Odds API requests (keeps API key server-side)
  */
+import dotenv from 'dotenv';
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadOddsApiKey } from '../lib/loadOddsApiKey.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const repoRoot = join(__dirname, '..');
+dotenv.config({ path: join(repoRoot, '.env') });
+dotenv.config({ path: join(repoRoot, '.env.local') });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const ODDS_API_KEY = process.env.ODDS_API_KEY || '';
+const ODDS_API_KEY = loadOddsApiKey(repoRoot);
 
 // In-memory user store (replace with a database in production)
 const users = new Map();
@@ -56,29 +61,51 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // --- Odds API proxy (keeps API key server-side) ---
-async function proxyOddsApi(path, query) {
+async function proxyOddsApiJson(res, sportKey, query) {
+  if (!ODDS_API_KEY) {
+    return res.status(503).json({
+      message: 'Server has no ODDS_API_KEY. Set ODDS_API_KEY in .env or .env.local and restart the API.',
+    });
+  }
   const queryStr = new URLSearchParams(query).toString();
-  const url = `https://api.the-odds-api.com${path}?${queryStr}&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+  const sep = queryStr ? '&' : '';
+  const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sportKey)}/odds?${queryStr}${sep}apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
   const response = await fetch(url);
-  return response.json();
+  const data = await response.json().catch(() => ({}));
+  return res.status(response.status).json(data);
 }
 
-app.all(/^\/api\/odds(\/.*)?/, async (req, res) => {
+app.get('/api/odds', async (req, res) => {
   try {
-    const sport = (req.params[0] || '').replace(/^\//, '') || 'upcoming';
-    const data = await proxyOddsApi(`/v4/sports/${sport}/odds`, req.query);
-    res.json(data);
+    await proxyOddsApiJson(res, 'upcoming', req.query);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message });
   }
 });
 
-app.use('/api/sports*', async (req, res) => {
+app.get('/api/odds/:sportKey', async (req, res) => {
   try {
-    const data = await proxyOddsApi('/v4/sports', req.query);
-    res.json(data);
+    await proxyOddsApiJson(res, req.params.sportKey, req.query);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/sports', async (req, res) => {
+  try {
+    if (!ODDS_API_KEY) {
+      return res.status(503).json({
+        message: 'Server has no ODDS_API_KEY. Set ODDS_API_KEY in .env or .env.local and restart the API.',
+      });
+    }
+    const queryStr = new URLSearchParams(req.query).toString();
+    const sep = queryStr ? '&' : '';
+    const url = `https://api.the-odds-api.com/v4/sports?${queryStr}${sep}apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+    const response = await fetch(url);
+    const data = await response.json().catch(() => ({}));
+    return res.status(response.status).json(data);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

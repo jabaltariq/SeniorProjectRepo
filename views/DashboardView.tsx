@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -74,6 +74,7 @@ interface DashboardViewProps {
   userInitials: string;
   userEmail: string;
   sportFilter: string;
+  hasSelectedSport: boolean;
   leagueFilter: string;
   searchQuery: string;
   sportTabs: readonly string[];
@@ -84,7 +85,7 @@ interface DashboardViewProps {
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
-  onPlaceBet: (stake: number) => void;
+  onPlaceBet: (stake: number, betType?: 'single' | 'parlay') => void;
   onClearBet: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
   onDailyBonus: () => void;
@@ -107,6 +108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     userInitials,
     userEmail,
     sportFilter,
+    hasSelectedSport,
     leagueFilter,
     searchQuery,
     sportTabs,
@@ -133,7 +135,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const location = useLocation();
   const navigate = useNavigate();
   const view = pathToView(location.pathname);
-  const [localBets, setLocalBets] = useState<Bet[]>([]);
   const [marketLayoutMode, setMarketLayoutMode] = useState<'DISCOVER' | 'ALL_LEAGUES'>('DISCOVER');
 
   const splitTeams = (title: string) => {
@@ -234,32 +235,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const displayBalance = `$${Math.max(0, safeBalance).toFixed(2)}`;
   const isOptionSelected = (market: Market, option: MarketOption) =>
     parlaySelections.some((sel) => sel.market.id === market.id && sel.option.id === option.id);
-
-  useEffect(() => {
-    const uid = localStorage.getItem('uid');
-    if (!uid) return;
-
-    const unsubscribe = listenForChange(uid);
-
-    (async () => {
-      try {
-        const money = await getUserMoney(uid);
-        if (money != null) localStorage.setItem('userMoney', String(money));
-      } catch {
-        /* ignore */
-      }
-      try {
-        const bets = await getBets(uid);
-        setLocalBets(bets);
-      } catch {
-        /* ignore */
-      }
-    })();
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
 
   const renderContent = () => {
     switch (view) {
@@ -481,15 +456,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                     <input
                       type="text"
-                      placeholder="Search games..."
+                      placeholder={hasSelectedSport ? 'Search games...' : 'Select a sport tab to load markets'}
                       value={searchQuery}
                       onChange={(e) => onSearchChange(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm"
+                      disabled={!hasSelectedSport}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
 
-                {!loading && !error && leagueFilter === 'ALL' && (
+                {!loading && !error && leagueFilter === 'ALL' && hasSelectedSport && (
                   <section className="mb-2">
                     <div className="flex items-center gap-2 mb-3">
                       <Flame className="text-orange-400" size={16} />
@@ -522,7 +498,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                   </section>
                 )}
 
-                {loading ? (
+                {!hasSelectedSport ? (
+                  <div className="col-span-full py-20 text-center rounded-xl border border-dashed border-slate-700/80 bg-slate-950/40">
+                    <BarChart3 className="mx-auto text-slate-700 mb-4" size={48} />
+                    <h3 className="text-xl font-bold text-slate-200">Choose a sport to load markets</h3>
+                    <p className="text-slate-500 mt-2 max-w-md mx-auto text-sm">
+                      Pick a sport tab in the sidebar or trending row. We only fetch odds after you select a filter.
+                    </p>
+                  </div>
+                ) : loading ? (
                   <div className="flex flex-col items-center justify-center py-20 gap-4">
                     <Loader2 className="text-blue-400 animate-spin" size={48} />
                     <p className="text-slate-400">Loading live odds...</p>
@@ -533,7 +517,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                     <h3 className="text-xl font-bold text-slate-200 mb-2">Couldn&apos;t load odds</h3>
                     <p className="text-slate-400 mb-4">{error}</p>
                     <p className="text-xs text-slate-500 mb-4">Set ODDS_API_KEY in .env.local and restart the dev server.</p>
-                    <button onClick={onRetryMarkets} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all">
+                    <button
+                      onClick={onRetryMarkets}
+                      disabled={!hasSelectedSport}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
                       <RefreshCw size={18} /> Retry
                     </button>
                   </div>
@@ -733,6 +721,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         <BetSlip
           selection={betSelection}
           parlaySelections={parlaySelections}
+          activeBets={props.activeBets}
           onClear={onClearBet}
           onPlaceBet={onPlaceBet}
           onSelectBet={onSelectBet}

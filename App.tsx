@@ -50,6 +50,7 @@ const App: React.FC = () => {
       userInitials={dashboard.auth.userInitials}
       userEmail={dashboard.auth.userEmail ?? ''}
       sportFilter={dashboard.markets.sportFilter}
+      hasSelectedSport={dashboard.markets.hasSelectedSport}
       leagueFilter={dashboard.markets.leagueFilter}
       searchQuery={dashboard.markets.searchQuery}
       sportTabs={dashboard.markets.sportTabs}
