@@ -273,8 +273,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         <h4 className="text-lg font-bold">Selected: {bet.optionLabel}</h4>
                         <p className="text-xs text-slate-500 mt-1">{bet.placedAt.toLocaleString()}</p>
                       </div>
-                      <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Pending Result</span>
-                    </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${
+                          bet.status?.toLowerCase() === 'won'  ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                              bet.status?.toLowerCase() === 'lost' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                  'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                      }`}>
+  {bet.status?.toLowerCase() === 'won' ? 'Won' : bet.status?.toLowerCase() === 'lost' ? 'Lost' : 'Pending'}
+</span>                    </div>
                     <div className="flex justify-between items-end border-t border-slate-800 pt-4">
                       <div className="grid grid-cols-2 gap-8">
                         <div>
