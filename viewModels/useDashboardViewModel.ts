@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
-import type { Friend, LeaderboardEntry } from '../models';
+import type {Bet, Friend, LeaderboardEntry, SocialActivity} from '../models';
 import { useBettingViewModel } from './useBettingViewModel';
 import { useMarketsViewModel } from './useMarketsViewModel';
 import { MOCK_FRIENDS, MOCK_ACTIVITY } from '../models/constants';
-import { getTopUsers } from '../services/dbOps';
+import {getFriends, getTopUsers, loadCommunityActivity} from '../services/dbOps';
 
 /**
  * Composes betting + markets + auth for DashboardView.
@@ -21,22 +21,33 @@ export function useDashboardViewModel(auth: AuthViewModel) {
   const betting = useBettingViewModel(auth.userEmail ?? null);
   const markets = useMarketsViewModel();
 
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [betList, setBetList] = useState<Bet[]>([]);
+  const [activities, setActivities] = useState<SocialActivity[]>([])
   const [view, setView] = useState<DashboardView>('MARKETS');
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
 
   useEffect(() => {
+    getFriends(localStorage.uid).then((list) => {
+      setFriends(list)
+    })
+    loadCommunityActivity().then((list) => {
+      setActivities(list)
+      setBetList(betList)
+    })
+    console.log(friends)
     let cancelled = false;
     getTopUsers()
-      .then((rows) => {
-        if (cancelled) return;
-        const uid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null;
-        setLeaderboardEntries(
-          rows.map((r) => ({ ...r, isCurrentUser: uid != null && r.id === uid }))
-        );
-      })
-      .catch((err) => {
-        console.error('Failed to load leaderboard', err);
-      });
+        .then((rows) => {
+          if (cancelled) return;
+          const uid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null;
+          setLeaderboardEntries(
+              rows.map((r) => ({...r, isCurrentUser: uid != null && r.id === uid}))
+          );
+        })
+        .catch((err) => {
+          console.error('Failed to load leaderboard', err);
+        });
     return () => {
       cancelled = true;
     };
@@ -49,6 +60,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
 
 
   return {
+    betList,
     auth,
     betting,
     markets,
@@ -56,7 +68,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     setView,
     handleChallenge,
     leaderboardEntries,
-    friends: MOCK_FRIENDS,
-    activity: MOCK_ACTIVITY,
+    friends: friends,
+    activity: activities,
   };
 }

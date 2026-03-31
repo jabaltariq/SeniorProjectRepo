@@ -1,7 +1,10 @@
 
-import React from 'react';
-import { Friend, SocialActivity } from '../models';
-import { Users, Activity, Swords, Circle, ShieldCheck, ShieldOff } from 'lucide-react';
+import React, {useEffect, useState} from 'react';
+import {Bet, Friend, SocialActivity} from '../models';
+import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search} from 'lucide-react';
+import {addFriend} from "@/services/dbOps.ts";
+import {betList} from "@/services/authService.ts";
+import {Timestamp} from "firebase/firestore";
 
 interface SocialViewProps {
   friends: Friend[];
@@ -9,7 +12,19 @@ interface SocialViewProps {
   onChallenge: (friend: Friend) => void;
 }
 
-export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onChallenge }) => {
+/*
+Just a note to anyone looking at this code, if I see a single change or a single commit that changes THIS FILE I'm going to
+delete the whole repository. signed aidan rodriguez at 2:04 am
+ */
+export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onChallenge, bets }) => {
+  const [searchQuery, onSearchChange] = useState("")
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const betList : Bet[] = bets;
+  const toggleDetails = (id : string) => {
+    setExpandedId(prev => (prev === id  ? null: id));
+
+  }
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 animate-in fade-in slide-in-from-right-4 duration-500">
       {/* Friends List */}
@@ -46,9 +61,22 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
               </button>
             </div>
           ))}
-          <button className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
+          <button
+              onClick={() =>
+                  addFriend(searchQuery, localStorage.getItem("uid"))}
+              className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
             + Add Friend
           </button>
+          <div className="relative w-full max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+            <input
+                type="text"
+                placeholder="Add friend by username..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm"
+            />
+          </div>
         </div>
 
         <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10">
@@ -74,10 +102,12 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
         </div>
 
         <div className="space-y-4">
-          {activities.map(activity => (
+          {activities?.map(activity => (
+
             <div key={activity.id} className="glass-card rounded-2xl p-4 flex gap-4 border-slate-800 hover:bg-slate-800/20 transition-all">
               <div className="w-10 h-10 rounded-xl bg-slate-800 flex-shrink-0 flex items-center justify-center font-bold text-slate-400">
                 {activity.userAvatar}
+
               </div>
               <div className="flex-1">
                 <div className="flex justify-between items-start">
@@ -89,13 +119,53 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
                   <span className="text-[10px] text-slate-600 font-bold uppercase">{activity.timestamp}</span>
                 </div>
                 <div className="mt-3 flex gap-2">
-                  <button className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter">
+                  <button
+                      onClick={() => toggleDetails(activity.id)}
+                      className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter">
                     <Activity size={12} /> View Bet
                   </button>
+
+
                   <button className="text-[10px] font-bold text-slate-500 hover:text-blue-400 flex items-center gap-1 uppercase tracking-tighter">
                     <Swords size={12} /> Counter-Bet
                   </button>
                 </div>
+                {expandedId === activity.id && (
+                   <div
+                       style = {{padding: '5px'}}
+                       className={"text-sm"}>
+                     <span className="font-bold text-slate-100">Stake: </span>
+                     <span> ${betList.find(obj => obj.id === activity.id).stake} </span>
+                   </div>
+
+                )}
+                {expandedId === activity.id && (
+                    <div
+                        style = {{padding: '5px'}}
+                        className={"text-sm"}>
+                      <span className="font-bold text-slate-100"> Odds: </span>
+                      <span>{betList.find(obj => obj.id === activity.id).odds} </span>
+                    </div>
+
+                )}
+                {expandedId === activity.id && (
+                    <div
+                        style = {{padding: '5px'}}
+                        className={"text-sm"}>
+                      <span className="font-bold text-slate-100"> Potential Payout: </span>
+                      <span>{betList.find(obj => obj.id === activity.id).potentialPayout}</span>
+                    </div>
+
+                )}
+                {expandedId === activity.id && (
+                    <div
+                        style = {{padding: '5px'}}
+                        className={"text-sm"}>
+                      <span className="font-bold text-slate-100"> Placed on: </span>
+                      <span>{(betList.find(obj => obj.id === activity.id).placedAt as unknown as Timestamp).toDate().toLocaleString()}</span>
+                    </div>
+
+                )}
               </div>
             </div>
           ))}

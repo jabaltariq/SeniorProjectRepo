@@ -4,16 +4,17 @@ import { Bet, LeaderboardEntry, ParlayLeg, BetStatus } from "@/models";
 
 export var currBets = new Array<Bet>;
 
+export var allBets = new Array<Bet>;
 /**
  * Sets a specified user's username in Firestore
  * @param uid A user's Firebase Authentication ID.
  * @param name The new username that the user will have in Firestore.
  * @author Aidan Rodriguez
  */
-export async function setUserName(uid : string, name : string) {
+export async function setUserName(uid: string, name: string) {
     await setDoc(doc(db, "userInfo", uid), {
         name: name
-    }, { merge: true })
+    }, {merge: true})
 }
 
 /**
@@ -25,7 +26,7 @@ export async function resetRatio(uid: string) {
     await setDoc(doc(db, "userInfo", uid), {
         wins: 0,
         losses: 0
-    }, { merge: true })
+    }, {merge: true})
 }
 
 /**
@@ -34,7 +35,7 @@ export async function resetRatio(uid: string) {
  * @return An array of two numbers - index 0 is the user's wins, while index 1 is the user's losses.
  * @author Aidan Rodriguez
  */
-export async function getUserRatio(uid: string) : Promise<number[]> {
+export async function getUserRatio(uid: string): Promise<number[]> {
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);
 
@@ -74,10 +75,10 @@ export async function getUserMoney(uid : string) : Promise<number> {
  * @param amount The new amount that the user will have in Firestore.
  * @author Aidan Rodriguez
  */
-export async function setUserMoney(uid : string, amount : number) {
+export async function setUserMoney(uid: string, amount: number) {
     await setDoc(doc(db, "userInfo", uid), {
         money: amount
-    }, { merge : true});
+    }, {merge: true});
 }
 
 /**
@@ -85,21 +86,21 @@ export async function setUserMoney(uid : string, amount : number) {
  * @param uid A user's Firebase Authentication ID.
  * @author Aidan Rodriguez
  */
-export async function claimedDaily(uid : string) {
+export async function claimedDaily(uid: string) {
     await setDoc(doc(db, "userInfo", uid), {
         lastClaim: Timestamp.now()
-    }, { merge: true})
+    }, {merge: true})
 }
 
 /**
  * Sets a user's last claim to 1/1/1900, used in the creation of a new user.
  * @param uid A user's Firebase Authentication ID.
  */
-export async function setNewDaily(uid : string) {
+export async function setNewDaily(uid: string) {
     var beginningOfTime = new Date(1900, 1, 1)
     await setDoc(doc(db, "userInfo", uid), {
         lastClaim: Timestamp.fromDate(beginningOfTime)
-    }, { merge: true })
+    }, {merge: true})
 }
 
 /**
@@ -107,7 +108,7 @@ export async function setNewDaily(uid : string) {
  * @param uid A user's Firebase Authentication ID.
  * @param amount The amount that will be added to the user's money (or in the case of a negative number, subtracted).
  */
-export async function changeUserMoney(uid : string, amount : number) {
+export async function changeUserMoney(uid: string, amount: number) {
     const newMoney = ((await getUserMoney(uid)) + amount);
     await setDoc(doc(db, "userInfo", uid), {
         money: newMoney
@@ -140,7 +141,7 @@ export function listenForChange(uid: string, onUpdate?: ListenForChangeCallback)
             : true;
         localStorage.setItem("hasDailyBonus", hasDailyBonus ? "true" : "false");
 
-        onUpdate?.({ money, hasDailyBonus });
+        onUpdate?.({money, hasDailyBonus});
     });
 }
 
@@ -470,4 +471,123 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
     topUserList.forEach((user, i) => { user.rank = i + 1; });
 
     return topUserList;
+}
+
+export async function addFriend(name: string, currUid: string) {
+    const querySnapshot = await getDocs(collection(db, "userInfo"))
+    let data: DocumentData;
+    let friendId : string;
+    for (const docSnap of querySnapshot.docs) {
+        friendId = docSnap.id
+        data = docSnap.data();
+        if (data["name"] == name) {
+            break;
+        }
+    }
+
+    const docRef = doc(db, "userInfo", currUid);
+    const docSnap = await getDoc(docRef);
+
+    var friendsList : String[]
+    if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data["friends"] == undefined) {
+            friendsList = []
+        }
+        else {
+            friendsList = data["friends"];
+        }
+
+
+        if (friendsList.includes(friendId)) {
+            return;
+        }
+        friendsList.push(friendId)
+        await setDoc(doc(db, "userInfo", currUid), {
+            friends: friendsList
+        }, {merge: true});
+    }
+}
+
+export async function loadCommunityActivity() : Promise<SocialActivity[]> {
+    const querySnapshot = await getDocs(collection(db, "bets"))
+    var socialActivityList : SocialActivity[] = []
+
+    for (const docSnap of querySnapshot.docs) {
+        const data = docSnap.data();
+
+        var isSingleBet = (data["betType"] == undefined);
+        if (!isSingleBet) {
+            console.log("throwing out parlay document")
+            continue;
+        }
+
+        const documentReference = doc(db, "userInfo", data["userID"])
+        const documentSnapshot = await getDoc(documentReference);
+
+        const userData = documentSnapshot.data();
+
+        if (userData == undefined) {
+            continue;
+        }
+
+        const newSocialActivity : SocialActivity = {
+            id: docSnap.id,
+            userId: documentSnapshot.id,
+            userName: userData["name"],
+            userAvatar: userData["name"]?.slice(0, 2),
+            action: "placed a bet on",
+            target: data["marketTitle"],
+            timestamp: ""
+        }
+
+        const newBet : Bet = {
+            id: docSnap.id,
+            marketId: data["marketId"],
+            marketTitle: data["marketTitle"],
+            optionLabel: data["optionLabel"],
+            stake: data["stake"],
+            odds: data["odds"],
+            potentialPayout: data["potentialPayout"],
+            placedAt: data["placedAt"]
+        }
+        betList.push(newBet)
+        socialActivityList.push(newSocialActivity)
+    }
+    console.log(betList)
+    return socialActivityList
+}
+
+export async function getFriends(uid : string) : Promise<Friend[]> {
+    const documentReference = doc(db, "userInfo", uid);
+    const documentSnapshot = await getDoc(documentReference);
+
+    var friendsListAsString : string[] = []
+    var friendsList : Friend[] = []
+    if (documentSnapshot.exists()) {
+        const data = documentSnapshot.data();
+        friendsListAsString = data["friends"];
+        if (data["friends"] == undefined) {
+
+        }
+        for (const friend of friendsListAsString) {
+            const friendDocumentReference = doc(db, "userInfo", friend);
+            const friendDocumentSnapshot = await getDoc(friendDocumentReference);
+
+            if (friendDocumentSnapshot.exists()) {
+                const friendData = friendDocumentSnapshot.data();
+
+
+                friendsList.push({
+                    id: friend,
+                    name: friendData["name"],
+                    avatar: friendData["name"].slice(0, 2),
+                    status: 'online',
+                    lastActive: "dont care",
+                    privacyEnabled: false
+                })
+            }
+        }
+    }
+    return friendsList;
 }

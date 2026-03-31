@@ -33,6 +33,8 @@ import { SettingsView } from './SettingsView';
 import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
+import { getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
+import {betList, friendsList} from "@/services/authService.ts";
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
 
@@ -63,6 +65,7 @@ function pathToView(pathname: string): DashboardViewType {
 interface DashboardViewProps {
   balance: number;
   activeBets: Bet[];
+  betList: Bet[];
   betSelection: { market: Market; option: MarketOption } | null;
   parlaySelections: Array<{ market: Market; option: MarketOption }>;
   dailyBonusAvailable: boolean;
@@ -244,7 +247,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'LEADERBOARD':
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
-        return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} />;
+        return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} />;
         /*
       case 'PROFILE':
         return (

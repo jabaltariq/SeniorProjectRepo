@@ -1,7 +1,7 @@
 
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
-  getBets,
+  getBets, getFriends,
   getLastDaily,
   getUserMoney,
   normalizeUserInfoDoc,
@@ -11,7 +11,7 @@ import {
   setUserName
 } from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
-import { Bet } from "@/models";
+import {Bet, Friend} from "@/models";
 
 
 const SESSION_KEY = 'bethub_session';
@@ -20,6 +20,8 @@ let userMoney = 0;
 let userId = '';
 let dailyBonusAvailable = "true";
 export let betList: Bet[] = [];
+
+export let friendsList : Friend[] = [];
 
 export interface User {
   email: string;
@@ -94,6 +96,7 @@ export async function login(email: string, password: string): Promise<{ success:
 
     betList = await getBets(userId);
 
+    friendsList = await getFriends(userId);
     console.log("Bets added from database: " + betList.length);
 
     setSession(userEmail);
