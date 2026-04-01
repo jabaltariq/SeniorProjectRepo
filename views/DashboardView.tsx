@@ -29,14 +29,13 @@ import { BetSlip } from '../components/BetSlip';
 import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import { HomeLanding } from '../components/HomeLanding';
-import { SettingsView } from './SettingsView';
 import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import { getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 
-type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
+type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE';
 
 function pathToView(pathname: string): DashboardViewType {
   // React Router v6 strips basename from pathname, so we get e.g. "/friends" not "/bethub/friends"
@@ -50,7 +49,7 @@ function pathToView(pathname: string): DashboardViewType {
     case 'markets':
       return 'MARKETS';
     case 'profile':
-      return 'SETTINGS';
+      return 'PROFILE';
     case 'friends':
       return 'SOCIAL';
     case 'leaderboard':
@@ -101,6 +100,7 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const {
     balance,
+    betList,
     betSelection,
     parlaySelections,
     dailyBonusAvailable,
@@ -248,7 +248,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} />;
-        /*
       case 'PROFILE':
         return (
           <ProfileView
@@ -256,10 +255,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             userEmail={userEmail}
             balance={balance}
             activeBetsCount={props.activeBets.length}
+            currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
           />
-        );*/
-      case 'SETTINGS':
-        return <SettingsView userEmail={userEmail} />;
+        );
       case 'HISTORY':
         return (
           <div className="animate-in fade-in duration-500">

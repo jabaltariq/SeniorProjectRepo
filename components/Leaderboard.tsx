@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { NavLink } from 'react-router-dom';
 import { LeaderboardEntry } from '../models';
 import { Trophy, TrendingUp, Medal } from 'lucide-react';
 
@@ -68,10 +69,13 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
                       {entry.avatar}
                     </div>
                     <div>
-                      <p className={`font-bold ${entry.isCurrentUser ? 'text-blue-400' : 'text-slate-200'}`}>
+                      <NavLink
+                        to={`/profile/${entry.id}`}
+                        className={`font-bold transition-colors hover:text-blue-300 ${entry.isCurrentUser ? 'text-blue-400' : 'text-slate-200'}`}
+                      >
                         {entry.name}
                         {entry.isCurrentUser && <span className="ml-2 text-[8px] bg-blue-500 text-white px-1 rounded">YOU</span>}
-                      </p>
+                      </NavLink>
                     </div>
                   </div>
                 </td>
