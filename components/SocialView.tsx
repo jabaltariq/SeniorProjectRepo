@@ -19,10 +19,10 @@ delete the whole repository. signed aidan rodriguez at 2:04 am
 export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onChallenge, bets }) => {
   const [searchQuery, onSearchChange] = useState("")
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [privacy, togglePrivacy] = useState(false);
   const betList : Bet[] = bets;
   const toggleDetails = (id : string) => {
     setExpandedId(prev => (prev === id  ? null: id));
-
   }
 
   return (
@@ -53,7 +53,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
                   <p className="text-[10px] text-slate-500 uppercase font-bold">{friend.status} • {friend.lastActive}</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => onChallenge(friend)}
                 className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[10px] font-bold uppercase"
               >
@@ -84,11 +84,25 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
             <p className="text-[10px] font-bold text-indigo-400 uppercase flex items-center gap-1">
               <ShieldCheck size={12} /> Privacy Settings
             </p>
-            <div className="w-8 h-4 bg-indigo-600 rounded-full relative cursor-pointer">
-              <div className="absolute right-1 top-1 w-2 h-2 bg-white rounded-full" />
-            </div>
+            {!privacy && (
+                <div
+                    onClick={() => togglePrivacy(!privacy)}
+                    className="w-8 h-4 bg-slate-600 rounded-full relative cursor-pointer">
+                  <div className="absolute left-1 top-1 w-2 h-2 bg-white rounded-full"/>
+                </div>
+                )}
+            {privacy && (
+                <div
+                    onClick={() => togglePrivacy(!privacy)}
+                    className="w-8 h-4 bg-indigo-600 rounded-full relative cursor-pointer">
+                  <div className="absolute right-1 top-1 w-2 h-2 bg-white rounded-full" />
+                </div>
+            )}
+
+
+
           </div>
-          <p className="text-[10px] text-slate-500">Your betting activity is currently visible to friends.</p>
+          <p className="text-[10px] text-slate-500">{privacy ? "Your betting history is only visible to friends." : "Your betting history is public."}</p>
         </div>
       </div>
 
@@ -131,42 +145,38 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, activities, onC
                   </button>
                 </div>
                 {expandedId === activity.id && (
-                   <div
-                       style = {{padding: '5px'}}
-                       className={"text-sm"}>
-                     <span className="font-bold text-slate-100">Stake: </span>
-                     <span> ${betList.find(obj => obj.id === activity.id).stake} </span>
-                   </div>
-
-                )}
-                {expandedId === activity.id && (
                     <div
-                        style = {{padding: '5px'}}
-                        className={"text-sm"}>
-                      <span className="font-bold text-slate-100"> Odds: </span>
-                      <span>{betList.find(obj => obj.id === activity.id).odds} </span>
+                        style = {{padding: '15px'}}
+                        className="">
+                    <div className="p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10">
+                      <div
+                          style = {{padding: '5px'}}
+                          className={"text-sm"}>
+                        <span className="font-bold text-slate-100">Stake: </span>
+                        <span> ${betList.find(obj => obj.id === activity.id).stake} </span>
+                      </div>
+                      <div
+                          style = {{padding: '5px'}}
+                          className={"text-sm"}>
+                        <span className="font-bold text-slate-100"> Odds: </span>
+                        <span>{betList.find(obj => obj.id === activity.id).odds} </span>
+                      </div>
+                      <div
+                          style = {{padding: '5px'}}
+                          className={"text-sm"}>
+                        <span className="font-bold text-slate-100"> Potential Payout: </span>
+                        <span>{betList.find(obj => obj.id === activity.id).potentialPayout}</span>
+                      </div>
+                      <div
+                          style = {{padding: '5px'}}
+                          className={"text-sm"}>
+                        <span className="font-bold text-slate-100"> Placed on: </span>
+                        <span>{(betList.find(obj => obj.id === activity.id).placedAt as unknown as Timestamp).toDate().toLocaleString()}</span>
+                      </div>
                     </div>
-
-                )}
-                {expandedId === activity.id && (
-                    <div
-                        style = {{padding: '5px'}}
-                        className={"text-sm"}>
-                      <span className="font-bold text-slate-100"> Potential Payout: </span>
-                      <span>{betList.find(obj => obj.id === activity.id).potentialPayout}</span>
                     </div>
-
                 )}
-                {expandedId === activity.id && (
-                    <div
-                        style = {{padding: '5px'}}
-                        className={"text-sm"}>
-                      <span className="font-bold text-slate-100"> Placed on: </span>
-                      <span>{(betList.find(obj => obj.id === activity.id).placedAt as unknown as Timestamp).toDate().toLocaleString()}</span>
-                    </div>
-
-                )}
-              </div>
+                </div>
             </div>
           ))}
         </div>
