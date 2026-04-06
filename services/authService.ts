@@ -8,7 +8,7 @@ import {
   resetRatio,
   setNewDaily,
   setUserMoney,
-  setUserName
+  setUserName, setUserPrivacy
 } from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
 import {Bet, Friend} from "@/models";
@@ -47,6 +47,7 @@ export async function signUp(email: string, password: string, username : string)
     await setUserName(user.uid, username)
     await setUserMoney(user.uid, 10000.00)
     await setNewDaily(user.uid)
+    await setUserPrivacy(user.uid, false)
     await resetRatio(user.uid)
     userEmail = userCredential.user.email
     userMoney = (await getUserMoney(userCredential.user.uid))

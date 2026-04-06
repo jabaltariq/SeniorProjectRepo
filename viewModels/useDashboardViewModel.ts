@@ -3,7 +3,14 @@ import type {Bet, Friend, LeaderboardEntry, SocialActivity} from '../models';
 import { useBettingViewModel } from './useBettingViewModel';
 import { useMarketsViewModel } from './useMarketsViewModel';
 import { MOCK_FRIENDS, MOCK_ACTIVITY } from '../models/constants';
-import {getFriends, getTopUsers, loadCommunityActivity} from '../services/dbOps';
+import {
+  FriendRequest,
+  getFriendRequests, getFriendRequestsAsName,
+  getFriends,
+  getTopUsers, getUserName,
+  getUserPrivacy,
+  loadCommunityActivity
+} from '../services/dbOps';
 
 /**
  * Composes betting + markets + auth for DashboardView.
@@ -26,8 +33,26 @@ export function useDashboardViewModel(auth: AuthViewModel) {
   const [activities, setActivities] = useState<SocialActivity[]>([])
   const [view, setView] = useState<DashboardView>('MARKETS');
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
-
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+  const [userName, setUserName] = useState<string>();
+  let [userPrivacy, setUserPrivacy] = useState<boolean>(false);
   useEffect(() => {
+    getFriendRequests(localStorage.uid).then((friendRequests) => {
+      getFriendRequestsAsName(friendRequests).then((value) => {
+        setFriendRequests(value)
+      })
+    })
+    getUserName(localStorage.uid).then((value) => {
+      setUserName(value)
+    })
+    getUserPrivacy(localStorage.uid).then((privacy) => {
+      if (privacy == true) {
+        setUserPrivacy(userPrivacy = true)
+      }
+      else {
+        setUserPrivacy(userPrivacy = false)
+      }
+    })
     getFriends(localStorage.uid).then((list) => {
       setFriends(list)
     })
@@ -35,7 +60,6 @@ export function useDashboardViewModel(auth: AuthViewModel) {
       setActivities(list)
       setBetList(betList)
     })
-    console.log(friends)
     let cancelled = false;
     getTopUsers()
         .then((rows) => {
@@ -60,6 +84,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
 
 
   return {
+    userPrivacy,
     betList,
     auth,
     betting,
@@ -70,5 +95,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     leaderboardEntries,
     friends: friends,
     activity: activities,
+    friendReqs: friendRequests,
+    userName: userName
   };
 }

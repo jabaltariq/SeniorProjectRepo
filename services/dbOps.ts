@@ -105,6 +105,15 @@ export async function setNewDaily(uid: string) {
     }, {merge: true})
 }
 
+export async function getUserName(uid : string) : Promise<string> {
+    const documentReference = doc(db, "userInfo", uid)
+    const documentSnapshot = await getDoc(documentReference)
+
+    if (documentSnapshot.exists()) {
+        const data = documentSnapshot.data()
+        return data["name"]
+    }
+}
 export async function setUserPrivacy(uid : string, access : boolean) {
     await setDoc(doc(db, "userInfo", uid), {
         privacy: access
@@ -119,6 +128,19 @@ export async function getUserPrivacy(uid: string) : Promise<boolean> {
         const data = documentSnapshot.data()
         return data["privacy"]
     }
+}
+
+export async function getFriendRequestsAsName(requests : FriendRequest[]) : Promise<FriendRequest[]> {
+    var friendRequestsAsName: FriendRequest[] = [];
+    for (const item of requests) {
+        const newFriendRequest = {
+            id: item.id,
+            sender: await getUserName(item.sender),
+            receiver: await getUserName(item.receiver)
+        };
+        friendRequestsAsName.push(newFriendRequest)
+    }
+    return friendRequestsAsName
 }
 /**
  * Adds to the user's current money in Firestore.
