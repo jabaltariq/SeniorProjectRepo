@@ -677,9 +677,13 @@ export async function handleFriendRequest (request : FriendRequest, accepted : b
                 }, { merge: true })
             }
         }
+        const documentReference = doc(db, "friendRequests", request.id)
+
+        await deleteDoc(documentReference)
+        console.log("Deleted friend request from database.")
     }
     else {
-        const documentReference = doc(db, "friendRequests")
+        const documentReference = doc(db, "friendRequests", request.id)
 
         await deleteDoc(documentReference)
         console.log("Deleted friend request from database.")
