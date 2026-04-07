@@ -1,13 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  User,
   Settings,
   Trophy,
   BarChart3,
-  ChevronDown,
-  ChevronUp,
-  LayoutGrid,
   Wallet,
   Target,
   Clock3,
@@ -61,7 +57,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [achievementDefinitions, setAchievementDefinitions] = useState<AchievementDefinition[]>([]);
   const [unlockedAchievementIds, setUnlockedAchievementIds] = useState<AccountAchievementKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCustomize, setShowCustomize] = useState(false);
+  const [isEditingStats, setIsEditingStats] = useState(false);
+  const [isEditingAchievements, setIsEditingAchievements] = useState(false);
+  const [isEditingBets, setIsEditingBets] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
@@ -235,21 +233,41 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   }, [netWorth, wins, losses, winRate, totalBets, isOwnProfile, activeBetsCount, recentBets]);
 
   const displayedStats = statCards.filter((card) => profileDisplay.stats.includes(card.id));
+  const statsForSection = isOwnProfile && isEditingStats ? statCards : displayedStats;
+  const unlockedAchievementCards = achievementCards.filter((card) => unlockedAchievementIds.includes(card.id));
   const displayedAchievements = achievementCards.filter(
     (card) => unlockedAchievementIds.includes(card.id) && profileDisplay.achievements.includes(card.id)
   );
+  const achievementsForSection = isOwnProfile && isEditingAchievements
+    ? unlockedAchievementCards
+    : displayedAchievements;
   const displayedBets = recentBets.filter((bet) => profileDisplay.bets.includes(bet.id));
+  const betsForSection = isOwnProfile && isEditingBets ? recentBets : displayedBets;
 
   return (
     <div className="animate-in fade-in duration-500 w-full">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-8">
-        <div className="flex items-center gap-4">
-          <div className="w-20 h-20 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center">
-            <span className="text-2xl font-bold text-blue-400">{avatarText}</span>
+        <div className="flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-6 flex-1 min-w-0">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-20 h-20 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center shrink-0">
+              <span className="text-2xl font-bold text-blue-400">{avatarText}</span>
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-2xl font-bold text-white">{isOwnProfile ? 'Account' : `${displayName}'s account`}</h2>
+              <p className="text-slate-400 text-sm break-all">{isOwnProfile ? userEmail : `${displayName} on BetHub`}</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-2xl font-bold text-white">{isOwnProfile ? 'Account' : `${displayName}'s account`}</h2>
-            <p className="text-slate-400 text-sm">{isOwnProfile ? userEmail : `${displayName} on BetHub`}</p>
+          <div className="flex-1 min-w-0 lg:max-w-md">
+            <div className="glass-card rounded-2xl p-4 border-slate-800">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                {isOwnProfile ? 'Public account display' : 'Visible on this account'}
+              </p>
+              <p className="text-sm text-slate-400">
+                {isOwnProfile
+                  ? 'Choose which sections other BetHub users can see when they open your account page.'
+                  : `${displayName} controls which account sections are public.`}
+              </p>
+            </div>
           </div>
         </div>
         {isOwnProfile && (
@@ -269,7 +287,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="space-y-6">
         <div className="space-y-6">
           {loading ? (
             <div className="glass-card rounded-2xl p-10 border-slate-800 text-center text-slate-400">
@@ -277,86 +295,184 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           ) : (
             <div className="space-y-6">
-              {displayedStats.length > 0 && (
+              {(statsForSection.length > 0 || isOwnProfile) && (
                 <section className="glass-card rounded-2xl p-6 border-slate-800">
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-blue-400">
-                    <BarChart3 size={20} /> Stats
-                  </h3>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-blue-400">
+                      <BarChart3 size={20} /> Stats
+                    </h3>
+                    {isOwnProfile && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingStats((prev) => !prev)}
+                        className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                      >
+                        {isEditingStats ? 'View' : 'Edit'}
+                      </button>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {displayedStats.map((card) => (
-                      <div key={card.id} className="p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                    {statsForSection.map((card) => {
+                      const isSelected = profileDisplay.stats.includes(card.id);
+                      const isClickable = isOwnProfile && isEditingStats;
+                      return (
+                      <button
+                        type="button"
+                        key={card.id}
+                        onClick={isClickable ? () => toggleStat(card.id) : undefined}
+                        disabled={!isClickable}
+                        className={`p-4 rounded-xl border text-left transition-colors ${
+                          isSelected
+                            ? 'border-blue-500/60 bg-blue-500/10'
+                            : 'border-slate-700 bg-slate-800/50'
+                        } ${isClickable ? 'cursor-pointer hover:border-blue-400/70' : 'cursor-default'}`}
+                      >
                         <p className="text-xs font-bold text-slate-500 uppercase mb-1">{card.label}</p>
                         <p className={`text-xl font-bold ${card.tone}`}>{card.value}</p>
-                      </div>
-                    ))}
+                      </button>
+                    );
+                    })}
                   </div>
+                  {isOwnProfile && !isEditingStats && statsForSection.length === 0 && (
+                    <p className="mt-4 text-sm text-slate-500">
+                      No stats are public yet. Switch to Edit to choose what others can see.
+                    </p>
+                  )}
                 </section>
               )}
 
-              {displayedAchievements.length > 0 && (
+              {(achievementsForSection.length > 0 || (isOwnProfile && unlockedAchievementCards.length > 0)) && (
                 <section className="glass-card rounded-2xl p-6 border-slate-800">
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-blue-400">
-                    <Trophy size={20} /> Achievements
-                  </h3>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-blue-400">
+                      <Trophy size={20} /> Achievements
+                    </h3>
+                    {isOwnProfile && unlockedAchievementCards.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingAchievements((prev) => !prev)}
+                        className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                      >
+                        {isEditingAchievements ? 'View' : 'Edit'}
+                      </button>
+                    )}
+                  </div>
                   <div className="grid gap-4 md:grid-cols-3">
-                    {displayedAchievements.map((achievement) => (
-                      <div
+                    {achievementsForSection.map((achievement) => {
+                      const isSelected = profileDisplay.achievements.includes(achievement.id);
+                      const isClickable = isOwnProfile && isEditingAchievements;
+                      return (
+                      <button
                         key={achievement.id}
-                        className={`rounded-xl border p-4 ${
-                          achievement.unlocked
-                            ? 'border-amber-400/30 bg-amber-500/10'
+                        type="button"
+                        onClick={isClickable ? () => toggleAchievement(achievement.id) : undefined}
+                        className={`rounded-xl border p-4 text-left transition-colors ${
+                          isSelected
+                            ? 'border-amber-400/40 bg-amber-500/10'
                             : 'border-slate-700 bg-slate-800/40'
+                        } ${
+                          isClickable ? 'cursor-pointer hover:border-amber-300/50' : 'cursor-default'
                         }`}
+                        disabled={!isClickable}
                       >
                         <div className="flex items-center gap-2 mb-2">
                           <Trophy
                             size={18}
-                            className={achievement.unlocked ? 'text-amber-300' : 'text-slate-500'}
+                            className={isSelected ? 'text-amber-300' : 'text-slate-500'}
                           />
-                          <p className="font-semibold text-slate-100">{achievement.title}</p>
+                          <p className={`font-semibold ${isSelected ? 'text-amber-100' : 'text-slate-200'}`}>
+                            {achievement.title}
+                          </p>
                         </div>
-                        <p className="text-sm text-slate-400">{achievement.detail}</p>
-                      </div>
-                    ))}
+                        <p className={`${isSelected ? 'text-amber-200/80' : 'text-slate-400'} text-sm`}>
+                          {achievement.detail}
+                        </p>
+                      </button>
+                    );
+                    })}
                   </div>
+                  {isOwnProfile && !isEditingAchievements && achievementsForSection.length === 0 && (
+                    <p className="mt-4 text-sm text-slate-500">
+                      No achievements are public yet. Switch to Edit to choose what others can see.
+                    </p>
+                  )}
+                  {isOwnProfile && isEditingAchievements && unlockedAchievementCards.length === 0 && (
+                    <p className="mt-4 text-sm text-slate-500">
+                      Unlock achievements to choose which ones appear publicly.
+                    </p>
+                  )}
                 </section>
               )}
 
-              {displayedBets.length > 0 && (
+              {(betsForSection.length > 0 || isOwnProfile) && (
                 <section className="glass-card rounded-2xl p-6 border-slate-800">
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-blue-400">
-                    <Target size={20} /> Featured Bets
-                  </h3>
-                  {displayedBets.length > 0 ? (
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-blue-400">
+                      <Target size={20} /> Featured Bets
+                    </h3>
+                    {isOwnProfile && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingBets((prev) => !prev)}
+                        className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                      >
+                        {isEditingBets ? 'View' : 'Edit'}
+                      </button>
+                    )}
+                  </div>
+                  {betsForSection.length > 0 ? (
                     <div className="space-y-3">
-                      {displayedBets.map((bet) => (
-                        <div
+                      {betsForSection.map((bet) => {
+                        const isSelected = profileDisplay.bets.includes(bet.id);
+                        const isClickable = isOwnProfile && isEditingBets;
+                        return (
+                        <button
                           key={bet.id}
-                          className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"
+                          type="button"
+                          onClick={isClickable ? () => toggleBet(bet.id) : undefined}
+                          disabled={!isClickable}
+                          className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                            isSelected
+                              ? 'border-blue-500/60 bg-blue-500/10'
+                              : 'border-slate-700 bg-slate-900/60'
+                          } ${isClickable ? 'cursor-pointer hover:border-blue-400/70' : 'cursor-default'}`}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
                               <p className="font-semibold text-slate-100">{bet.marketTitle}</p>
                               <p className="text-sm text-slate-400">{bet.optionLabel}</p>
                             </div>
-                            <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300">
-                              {(bet.status ?? 'PENDING').toLowerCase()}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300">
+                                {(bet.status ?? 'PENDING').toLowerCase()}
+                              </span>
+                              {isClickable && isSelected && <Check size={16} className="text-blue-300" />}
+                            </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-400">
                             <span className="inline-flex items-center gap-1"><Wallet size={12} /> ${bet.stake.toLocaleString()} stake</span>
                             <span className="inline-flex items-center gap-1"><Target size={12} /> {bet.odds.toFixed(2)} odds</span>
                             <span className="inline-flex items-center gap-1"><Clock3 size={12} /> {bet.placedAt.toLocaleString()}</span>
                           </div>
-                        </div>
-                      ))}
+                        </button>
+                      );
+                      })}
                     </div>
                   ) : (
                     <div className="py-8 text-center border border-dashed border-slate-700 rounded-xl">
                       <Target className="mx-auto text-slate-600 mb-3" size={48} />
                       <p className="text-slate-500 font-medium">No featured bets to show yet</p>
-                      <p className="text-sm text-slate-600 mt-1">Once bets are placed, they can appear here on the account page.</p>
+                      <p className="text-sm text-slate-600 mt-1">
+                        {isOwnProfile && isEditingBets
+                          ? 'Place a few bets to choose which ones appear here.'
+                          : 'Once bets are placed, they can appear here on the account page.'}
+                      </p>
                     </div>
+                  )}
+                  {isOwnProfile && !isEditingBets && betsForSection.length === 0 && recentBets.length > 0 && (
+                    <p className="mt-4 text-sm text-slate-500">
+                      No featured bets are public yet. Switch to Edit to choose which bets to show.
+                    </p>
                   )}
                 </section>
               )}
@@ -364,103 +480,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           )}
         </div>
 
-        <aside className="space-y-4">
-          <div className="glass-card rounded-2xl p-5 border-slate-800">
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
-              {isOwnProfile ? 'Public account display' : 'Visible on this account'}
-            </p>
-            <p className="text-sm text-slate-400">
-              {isOwnProfile
-                ? 'Choose which sections other BetHub users can see when they open your account page.'
-                : `${displayName} controls which account sections are public.`}
-            </p>
-          </div>
-
-          {isOwnProfile && (
-            <div className="glass-card rounded-2xl p-5 border-slate-800">
-              <button
-                onClick={() => setShowCustomize(!showCustomize)}
-                className="flex items-center gap-2 text-sm font-medium text-slate-300 hover:text-white transition-colors"
-              >
-                <LayoutGrid size={18} />
-                Customize public account
-                {showCustomize ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-              </button>
-              {showCustomize && (
-                <div className="mt-4 space-y-3">
-                  <div className="rounded-xl border border-slate-700 bg-slate-800/30 p-3">
-                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">Stats</p>
-                    <div className="space-y-2">
-                      {statCards.map((card) => (
-                        <label
-                          key={card.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-800/40 px-3 py-2 cursor-pointer text-slate-200"
-                        >
-                          <span>{card.label}</span>
-                          <input
-                            type="checkbox"
-                            checked={profileDisplay.stats.includes(card.id)}
-                            onChange={() => toggleStat(card.id)}
-                            className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-700 bg-slate-800/30 p-3">
-                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">Achievements</p>
-                    <div className="space-y-2">
-                      {achievementCards
-                        .filter((achievement) => unlockedAchievementIds.includes(achievement.id))
-                        .map((achievement) => (
-                        <label
-                          key={achievement.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-800/40 px-3 py-2 cursor-pointer text-slate-200"
-                        >
-                          <span>{achievement.title}</span>
-                          <input
-                            type="checkbox"
-                            checked={profileDisplay.achievements.includes(achievement.id)}
-                            onChange={() => toggleAchievement(achievement.id)}
-                            className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
-                          />
-                        </label>
-                      ))}
-                      {unlockedAchievementIds.length === 0 && (
-                        <p className="text-sm text-slate-500">Unlocked achievements will appear here once you earn them.</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-700 bg-slate-800/30 p-3">
-                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">Featured Bets</p>
-                    <div className="space-y-2">
-                      {recentBets.length > 0 ? recentBets.map((bet) => (
-                        <button
-                          key={bet.id}
-                          type="button"
-                          onClick={() => toggleBet(bet.id)}
-                          className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${
-                            profileDisplay.bets.includes(bet.id)
-                              ? 'border-blue-500/60 bg-blue-500/10 text-slate-100'
-                              : 'border-slate-700 bg-slate-800/40 text-slate-300'
-                          }`}
-                        >
-                          <div>
-                            <p className="text-sm font-medium">{bet.marketTitle}</p>
-                            <p className="text-xs text-slate-400">{bet.optionLabel}</p>
-                          </div>
-                          {profileDisplay.bets.includes(bet.id) && <Check size={16} className="text-blue-300" />}
-                        </button>
-                      )) : (
-                        <p className="text-sm text-slate-500">Place a few bets to choose which ones appear here.</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </aside>
       </div>
     </div>
   );
