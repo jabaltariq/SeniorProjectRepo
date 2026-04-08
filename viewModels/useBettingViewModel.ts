@@ -7,15 +7,14 @@ import {
   claimedDaily,
   getBets,
   getUserMoney,
-  listenForChange,
-  addBet
+  addBet,
 } from '@/services/dbOps';
+import { BoostType } from '@/services/dbOps';
 
 /**
  * Balance, placed bets, and bet selection. Used by DashboardView.
  * Loads balance from Firestore and re-subscribes whenever the active user changes.
  */
-
 export function useBettingViewModel() {
   type BetSelection = { market: Market; option: MarketOption };
 
@@ -25,18 +24,15 @@ export function useBettingViewModel() {
     return Number.isFinite(parsed) ? parsed : INITIAL_BALANCE;
   });
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
-
   const [betSelection, setBetSelection] = useState<BetSelection | null>(null);
   const [parlaySelections, setParlaySelections] = useState<BetSelection[]>([]);
   const [dailyBonusAvailable, setDailyBonusAvailable] = useState(() => {
     return localStorage.getItem('hasDailyBonus') === 'true';
-
   });
   const [bonusMessage, setBonusMessage] = useState<string | null>(null);
   const [isPlacingBet, setIsPlacingBet] = useState(false);
 
   useEffect(() => {
-    // Reset local/transient state whenever account changes.
     setActiveBets([]);
     setBetSelection(null);
     setBonusMessage(null);
@@ -56,15 +52,19 @@ export function useBettingViewModel() {
     getBets(uid).then((bets) => {
       setActiveBets(bets);
     }).catch(() => undefined);
-
-    /*
-    return listenForChange(uid, ({ money, hasDailyBonus }) => {
-      setBalance(money);
-      setDailyBonusAvailable(hasDailyBonus);
-    });*/
   }, [localStorage.getItem("userEmail")]);
 
-  const handlePlaceBet = useCallback((stake: number, betType: 'single' | 'parlay' = 'single') => {
+  /**
+   * Places a bet, optionally with a weekly boost applied.
+   * The boost is saved onto the bet doc and marked used atomically in Firestore.
+   * After placing, the boost is cleared so the next bet starts fresh.
+   */
+  const handlePlaceBet = useCallback((
+      stake: number,
+      betType: 'single' | 'parlay' = 'single',
+      activeBoost: BoostType | null = null,
+      onBoostUsed?: () => void,
+  ) => {
     if (!betSelection || isPlacingBet) return;
 
     const uid = localStorage.getItem('uid');
@@ -78,40 +78,49 @@ export function useBettingViewModel() {
     const parlayOdds = parlaySelections.reduce((acc, s) => acc * s.option.odds, 1);
     const resolvedOdds = isParlayBet ? parlayOdds : betSelection.option.odds;
     const resolvedMarketId = isParlayBet
-      ? `parlay:${parlaySelections.map((s) => s.market.id).join('|')}`
-      : betSelection.market.id;
+        ? `parlay:${parlaySelections.map((s) => s.market.id).join('|')}`
+        : betSelection.market.id;
     const resolvedMarketTitle = isParlayBet
-      ? parlaySelections.map((s) => s.market.title).join(' | ')
-      : betSelection.market.title;
+        ? parlaySelections.map((s) => s.market.title).join(' | ')
+        : betSelection.market.title;
     const resolvedOptionLabel = isParlayBet ? `${parlayCount}-Leg Parlay` : betSelection.option.label;
     const parlayLegs = isParlayBet
-      ? parlaySelections.map((s) => ({
-          marketId: s.market.id,
+        ? parlaySelections.map((s) => ({
+          marketId:    s.market.id,
           marketTitle: s.market.title,
-          optionId: s.option.id,
+          optionId:    s.option.id,
           optionLabel: s.option.label,
-          odds: s.option.odds,
+          odds:        s.option.odds,
         }))
-      : undefined;
+        : undefined;
 
     const newBet: Bet = {
-      id: Math.random().toString(36).substr(2, 9),
-      marketId: resolvedMarketId,
-      marketTitle: resolvedMarketTitle,
-      optionLabel: resolvedOptionLabel,
+      id:              Math.random().toString(36).substr(2, 9),
+      marketId:        resolvedMarketId,
+      marketTitle:     resolvedMarketTitle,
+      optionLabel:     resolvedOptionLabel,
       betType,
       stake,
-      odds: resolvedOdds,
+      odds:            resolvedOdds,
       potentialPayout: stake * resolvedOdds,
-      placedAt: new Date(),
+      placedAt:        new Date(),
       parlayLegs,
     };
 
-    void addBet(uid, newBet);
-    void changeUserMoney(uid, -stake);
-    setActiveBets((prev) => [newBet, ...prev]);
-    setBetSelection(null);
-  }, [betSelection]);
+    // Use placeSingleBet (handles atomic debit + boost marking)
+    void placeSingleBet(uid, newBet, activeBoost).then((result) => {
+      if (result.success) {
+        setBalance(result.newBalance);
+        localStorage.setItem('userMoney', String(result.newBalance));
+        setActiveBets((prev) => [newBet, ...prev]);
+        setBetSelection(null);
+        // Clear the boost after successful placement
+        onBoostUsed?.();
+      } else {
+        console.error('Bet placement failed:', result.error);
+      }
+    });
+  }, [betSelection, parlaySelections, balance, isPlacingBet]);
 
   const handleDailyBonus = useCallback(() => {
     if (!dailyBonusAvailable) {

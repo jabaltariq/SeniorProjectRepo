@@ -30,8 +30,10 @@ import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
-import { BetOfTheDayCard } from '../components/BetofthedayCard';
+import { BetOfTheDayCard } from '../components/Betofthedaycard';
+import { BoostsCard } from '../components/Boostcard';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
+import { BoostType } from '@/services/dbOps.ts';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import { getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
@@ -136,7 +138,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const view = pathToView(location.pathname);
   const [marketLayoutMode, setMarketLayoutMode] = useState<'DISCOVER' | 'ALL_LEAGUES'>('DISCOVER');
 
-  // ── Grab uid once for BetOfTheDayCard ──────────────────────────
+  // ── Boost state — lives here so BetSlip and BoostsCard share it ─
+  const [activeBoost, setActiveBoost] = useState<BoostType | null>(null);
+
+  // ── Grab uid once for sidebar cards ────────────────────────────
   const uid = localStorage.getItem('uid') ?? '';
 
   const splitTeams = (title: string) => {
@@ -353,6 +358,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             <Sparkles size={12} />
                             Boosts
                           </button>
+                          {/* Weekly Boosts card — sits under the Boosts button */}
+                          {uid && (
+                              <BoostsCard
+                                  uid={uid}
+                                  activeBoost={activeBoost}
+                                  onSelectBoost={setActiveBoost}
+                              />
+                          )}
 
                           {/* ── Promotions button — expands BetOfTheDayCard below ── */}
                           <div className="space-y-1">
@@ -723,6 +736,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 onPlaceBet={onPlaceBet}
                 onSelectBet={onSelectBet}
                 balance={balance}
+                activeBoost={activeBoost}
             />
         )}
       </div>
