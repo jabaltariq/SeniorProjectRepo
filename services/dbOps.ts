@@ -633,6 +633,171 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
     return topUserList;
 }
 
+export type AccountStatKey = "netWorth" | "wins" | "losses" | "winRate" | "totalBets" | "openBets";
+export type AccountAchievementKey = string;
+
+export type AccountDisplaySection = "achievements" | "stats" | "bets";
+
+export type AccountDisplayConfig = {
+    stats: AccountStatKey[];
+    achievements: AccountAchievementKey[];
+    bets: string[];
+};
+
+export type AchievementDefinition = {
+    id: string;
+    title: string;
+    description: string;
+    icon?: string;
+    active: boolean;
+    sortOrder: number;
+    rule: {
+        type: string;
+        metric: string;
+        value: number;
+    };
+};
+
+export type AccountProfile = {
+    id: string;
+    name: string;
+    email?: string;
+    avatar: string;
+    netWorth: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    totalBets: number;
+    unlockedAchievements: AccountAchievementKey[];
+    profileDisplay: AccountDisplayConfig;
+};
+
+const DEFAULT_ACCOUNT_DISPLAY: AccountDisplayConfig = {
+    stats: ["netWorth", "wins", "winRate", "totalBets"],
+    achievements: ["firstBet", "onTheBoard", "bankrollBuilder"],
+    bets: [],
+};
+
+function uniqueStrings(values: string[]): string[] {
+    return Array.from(new Set(values));
+}
+
+function normalizeAccountDisplay(value: unknown, legacySections?: unknown): AccountDisplayConfig {
+    const statsAllowed: AccountStatKey[] = ["netWorth", "wins", "losses", "winRate", "totalBets", "openBets"];
+    const raw = value && typeof value === "object" ? value as Partial<AccountDisplayConfig> : {};
+
+    const normalized: AccountDisplayConfig = {
+        stats: Array.isArray(raw.stats)
+            ? uniqueStrings(raw.stats.filter((item): item is AccountStatKey => statsAllowed.includes(item as AccountStatKey)))
+            : [],
+        achievements: Array.isArray(raw.achievements)
+            ? uniqueStrings(raw.achievements.filter((item): item is AccountAchievementKey => typeof item === "string" && item.trim().length > 0))
+            : [],
+        bets: Array.isArray(raw.bets)
+            ? uniqueStrings(raw.bets.filter((item): item is string => typeof item === "string" && item.trim().length > 0))
+            : [],
+    };
+
+    const legacy = Array.isArray(legacySections)
+        ? legacySections.filter((section): section is AccountDisplaySection =>
+            ["achievements", "stats", "bets"].includes(section as AccountDisplaySection)
+          )
+        : [];
+
+    if (!normalized.stats.length && legacy.includes("stats")) {
+        normalized.stats = [...DEFAULT_ACCOUNT_DISPLAY.stats];
+    }
+    if (!normalized.achievements.length && legacy.includes("achievements")) {
+        normalized.achievements = [...DEFAULT_ACCOUNT_DISPLAY.achievements];
+    }
+    if (!normalized.bets.length && legacy.includes("bets")) {
+        normalized.bets = [...DEFAULT_ACCOUNT_DISPLAY.bets];
+    }
+
+    if (!normalized.stats.length && !normalized.achievements.length && !normalized.bets.length) {
+        return {
+            stats: [...DEFAULT_ACCOUNT_DISPLAY.stats],
+            achievements: [...DEFAULT_ACCOUNT_DISPLAY.achievements],
+            bets: [...DEFAULT_ACCOUNT_DISPLAY.bets],
+        };
+    }
+
+    return normalized;
+}
+
+export async function getAccountProfile(uid: string): Promise<AccountProfile | null> {
+    const userRef = doc(db, "userInfo", uid);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return null;
+
+    const data = userSnap.data();
+    const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "BetHub User";
+    const wins = Number(data.wins) || 0;
+    const losses = Number(data.losses) || 0;
+    const totalBets = wins + losses;
+    const winRate = totalBets > 0 ? Math.round((wins / totalBets) * 100) : 0;
+    const unlockedAchievements = Array.isArray(data.unlockedAchievements)
+        ? uniqueStrings(data.unlockedAchievements.filter((item): item is AccountAchievementKey => typeof item === "string" && item.trim().length > 0))
+        : [];
+    const profileDisplay = normalizeAccountDisplay(data.profileDisplay, data.profileDisplaySections);
+
+    return {
+        id: uid,
+        name,
+        email: typeof data.email === "string" ? data.email : undefined,
+        avatar: name.slice(0, 2).toUpperCase(),
+        netWorth: Number(data.money) || 0,
+        wins,
+        losses,
+        winRate,
+        totalBets,
+        unlockedAchievements,
+        profileDisplay,
+    };
+}
+
+export async function getAchievementDefinitions(): Promise<AchievementDefinition[]> {
+    const snapshot = await getDocs(collection(db, "achievementDefinitions"));
+    const achievements: AchievementDefinition[] = [];
+
+    snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const rule = data.rule && typeof data.rule === "object" ? data.rule : {};
+
+        achievements.push({
+            id: docSnap.id,
+            title: typeof data.title === "string" ? data.title : docSnap.id,
+            description: typeof data.description === "string" ? data.description : "",
+            icon: typeof data.icon === "string" ? data.icon : undefined,
+            active: data.active !== false,
+            sortOrder: Number(data.sortOrder) || 0,
+            rule: {
+                type: typeof rule.type === "string" ? rule.type : "",
+                metric: typeof rule.metric === "string" ? rule.metric : "",
+                value: Number(rule.value) || 0,
+            },
+        });
+    });
+
+    return achievements
+        .filter((achievement) => achievement.active)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export async function setAccountDisplay(uid: string, display: AccountDisplayConfig): Promise<void> {
+    await setDoc(doc(db, "userInfo", uid), {
+        profileDisplay: normalizeAccountDisplay(display),
+    }, { merge: true });
+}
+
+export async function setUnlockedAchievements(uid: string, achievementIds: AccountAchievementKey[]): Promise<void> {
+    await setDoc(doc(db, "userInfo", uid), {
+        unlockedAchievements: uniqueStrings(
+            achievementIds.filter((item): item is AccountAchievementKey => typeof item === "string" && item.trim().length > 0)
+        ),
+    }, { merge: true });
+}
+
 export async function addFriend(name: string, currUid: string) {
     const querySnapshot = await getDocs(collection(db, "userInfo"))
     let data: DocumentData;

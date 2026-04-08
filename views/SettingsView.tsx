@@ -14,17 +14,20 @@ import {
 
 interface SettingsViewProps {
   userEmail: string;
+  embedded?: boolean;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded = false }) => {
   return (
     <div className="animate-in fade-in duration-500 max-w-2xl">
-      <NavLink
-        to="/profile"
-        className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 mb-6 transition-colors"
-      >
-        <ChevronLeft size={18} /> Back to profile
-      </NavLink>
+      {!embedded && (
+        <NavLink
+          to="/profile"
+          className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 mb-6 transition-colors"
+        >
+          <ChevronLeft size={18} /> Back to account
+        </NavLink>
+      )}
       <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
         <User className="text-blue-400" size={24} /> Settings
       </h2>

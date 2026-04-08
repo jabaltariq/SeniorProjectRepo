@@ -31,12 +31,13 @@ import { SocialView } from '../components/SocialView';
 import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
 import { BetOfTheDayCard } from '../components/BetofthedayCard';
+import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import { getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 
-type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'SETTINGS';
+type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE';
 
 function pathToView(pathname: string): DashboardViewType {
   const normalized = pathname.replace(/^\/bethub\/?/, '').replace(/^\//, '');
@@ -49,7 +50,7 @@ function pathToView(pathname: string): DashboardViewType {
     case 'markets':
       return 'MARKETS';
     case 'profile':
-      return 'SETTINGS';
+      return 'PROFILE';
     case 'friends':
       return 'SOCIAL';
     case 'leaderboard':
@@ -100,6 +101,7 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const {
     balance,
+    betList,
     betSelection,
     parlaySelections,
     dailyBonusAvailable,
@@ -244,6 +246,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} />;
       case 'SETTINGS':
         return <SettingsView userEmail={userEmail} />;
+      case 'PROFILE':
+        return (
+          <ProfileView
+            userInitials={userInitials}
+            userEmail={userEmail}
+            balance={balance}
+            activeBetsCount={props.activeBets.length}
+            currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
+          />
+        );
       case 'HISTORY':
         return (
             <div className="animate-in fade-in duration-500">
