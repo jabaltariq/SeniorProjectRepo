@@ -30,9 +30,9 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
   const toggleDetails = (id : string) => {
     setExpandedId(prev => (prev === id  ? null: id));
   }
-  const visibleRequests = friendRequests.filter(
+  const [visibleRequests, setVisibleRequests] = useState(friendRequests.filter(
       request => request.receiver === userName
-  )
+  ))
   useEffect(() => {
     togglePrivacy(userPrivacy);
   }, [userPrivacy])
@@ -75,7 +75,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
           ))}
           <button
               onClick={() =>
-                  sendFriendRequest(searchQuery, localStorage.getItem("uid"))}
+                  sendFriendRequest(searchQuery, localStorage.getItem("uid")).then(() => onSearchChange(""))}
               className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
             + Add Friend
           </button>
@@ -100,19 +100,24 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
         <div className="space-y-3">
           {visibleRequests.map(friendRequest => (friendRequest.receiver == userName &&
               <div key={friendRequest.receiver} className="glass-card rounded-2xl p-4 flex items-center border border-dashed border-slate-800 justify-between group hover:border-blue-500/30 transition-all">
-
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     Request from {friendRequest.sender}
                   </div>
                   <div className="space-y-3">
                     <button
-                      onClick={() => handleFriendRequest(friendRequest.id, true)}
+                      onClick={() => {handleFriendRequest(friendRequest, true);
+                        const newList = visibleRequests.filter((item) => item.id !== friendRequest.id);
+                        setVisibleRequests(newList)
+                        }}
                       className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
                         Accept
                     </button>
                     <button
-                        onClick={() => handleFriendRequest(friendRequest.id, true)}
+                        onClick={() => {handleFriendRequest(friendRequest, false);
+                          const newList = visibleRequests.filter((item) => item.id !== friendRequest.id);
+                          setVisibleRequests(newList)
+                        }}
                         className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
                       Refuse
                     </button>

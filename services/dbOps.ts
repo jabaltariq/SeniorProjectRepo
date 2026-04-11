@@ -114,6 +114,17 @@ export async function getUserName(uid : string) : Promise<string> {
         return data["name"]
     }
 }
+
+export async function getUidByUsername(name : string) : Promise<string> {
+    const querySnapshot = await getDocs(collection(db, "userInfo"))
+
+    for (const docSnap of querySnapshot.docs) {
+        const data = docSnap.data()
+        if (data["name"] == name) {
+            return docSnap.id
+        }
+    }
+}
 export async function setUserPrivacy(uid : string, access : boolean) {
     await setDoc(doc(db, "userInfo", uid), {
         privacy: access
@@ -655,26 +666,16 @@ export async function getFriendRequests(uid : string) : Promise<FriendRequest[]>
 
 export async function handleFriendRequest (request : FriendRequest, accepted : boolean) {
     if (accepted) {
+        console.log(request)
         const querySnapshot = await getDocs(collection(db, "userInfo"));
 
         for (const docSnap of querySnapshot.docs) {
             const data = docSnap.data()
-            var currFriendsList : string[] = []
             if (data["name"] == request.sender) {
-                const documentReference : DocumentReference = docSnap.ref
-                currFriendsList = data["friends"]
-                currFriendsList.push(request.receiver)
-                await setDoc((documentReference), {
-                    friends: currFriendsList
-                }, { merge: true })
+                addFriend(data["name"], await getUidByUsername(request.receiver))
             }
             else if (data["name"] == request.receiver) {
-                const documentReference : DocumentReference = docSnap.ref
-                currFriendsList = data["friends"]
-                currFriendsList.push(request.sender)
-                await setDoc((documentReference), {
-                    friends : currFriendsList
-                }, { merge: true })
+                addFriend(data["name"], await getUidByUsername(request.sender))
             }
         }
         const documentReference = doc(db, "friendRequests", request.id)
@@ -699,7 +700,7 @@ export async function getFriends(uid : string) : Promise<Friend[]> {
         const data = documentSnapshot.data();
         friendsListAsString = data["friends"];
         if (data["friends"] == undefined) {
-
+            return []
         }
         for (const friend of friendsListAsString) {
             const friendDocumentReference = doc(db, "userInfo", friend);
