@@ -9,7 +9,8 @@
     "dev:all": "concurrently \"npm run server\" \"cross-env VITE_USE_EXPRESS=1 npm run dev\"",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "seed:achievements": "node scripts/seed-achievement-definitions.js"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

@@ -1,5 +1,6 @@
 
-import React, {useEffect, useState} from 'react';
+import React, { useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import {Bet, Friend, SocialActivity} from '../models';
 import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';
 import {
@@ -16,6 +17,7 @@ interface SocialViewProps {
   friends: Friend[];
   activities: SocialActivity[];
   onChallenge: (friend: Friend) => void;
+  bets: Bet[];
 }
 
 /*
@@ -61,7 +63,9 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                   }`} />
                 </div>
                 <div>
-                  <p className="font-bold text-slate-200">{friend.name}</p>
+                  <NavLink to={`/profile/${friend.id}`} className="font-bold text-slate-200 hover:text-blue-300 transition-colors">
+                    {friend.name}
+                  </NavLink>
                   <p className="text-[10px] text-slate-500 uppercase font-bold">{friend.status} • {friend.lastActive}</p>
                 </div>
               </div>
@@ -180,7 +184,9 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <p className="text-sm">
-                    <span className="font-bold text-slate-100">{activity.userName}</span>{' '}
+                    <NavLink to={`/profile/${activity.userId}`} className="font-bold text-slate-100 hover:text-blue-300 transition-colors">
+                      {activity.userName}
+                    </NavLink>{' '}
                     <span className="text-slate-400">{activity.action}</span>{' '}
                     <span className="font-bold text-blue-400">{activity.target}</span>
                   </p>

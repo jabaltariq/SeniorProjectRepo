@@ -1,4 +1,6 @@
 import { Market, MarketOption, MarketType } from '../models';
+import { BetOfTheDay, setBetOfTheDay } from '@/services/dbOps';
+import { Timestamp } from 'firebase/firestore';
 
 const API_BASE = '/api';
 
@@ -28,27 +30,6 @@ interface OddsApiEvent {
   away_team?: string;
   bookmakers: OddsApiBookmaker[];
 }
-//
-// function getMockSteelersRavensMarket(): Market {
-//   return {
-//     id: 'mock-nfl-steelers-ravens',
-//     title: 'Pittsburgh Steelers @ Baltimore Ravens (MOCK)',
-//     subtitle: 'NFL (MOCK)',
-//     category: 'Football',
-//     type: MarketType.SPORTS,
-//     status: 'UPCOMING',
-//
-//     startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-//     options: [
-//       { id: 'mock-h2h-steelers', label: 'Pittsburgh Steelers', odds: 2.2, marketKey: 'h2h' },
-//       { id: 'mock-h2h-ravens', label: 'Baltimore Ravens', odds: 1.72, marketKey: 'h2h' },
-//       { id: 'mock-spread-steelers', label: 'Pittsburgh Steelers +3.5', odds: 1.91, marketKey: 'spreads' },
-//       { id: 'mock-spread-ravens', label: 'Baltimore Ravens -3.5', odds: 1.91, marketKey: 'spreads' },
-//       { id: 'mock-total-over', label: 'Over 45.5', odds: 1.9, marketKey: 'totals' },
-//       { id: 'mock-total-under', label: 'Under 45.5', odds: 1.9, marketKey: 'totals' },
-//     ],
-//   };
-// }
 
 function americanToDecimal(american: number): number {
   if (american >= 100) {
@@ -113,15 +94,14 @@ function transformEventToMarket(event: OddsApiEvent): Market | null {
   const bookmaker = event.bookmakers?.[0];
   if (!bookmaker) return null;
 
-
   const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h' || m.key === 'outrights');
   if (!h2hMarket?.outcomes?.length) return null;
   const spreadsMarket = bookmaker.markets.find(m => m.key === 'spreads');
   const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
 
   const title = event.home_team && event.away_team
-    ? `${event.away_team} @ ${event.home_team}`
-    : event.home_team || event.away_team || 'Event';
+      ? `${event.away_team} @ ${event.home_team}`
+      : event.home_team || event.away_team || 'Event';
   const subtitle = event.sport_title || sportKeyToLeague(event.sport_key);
 
   const normalizeOdds = (price: number) => {
@@ -164,12 +144,10 @@ function transformEventToMarket(event: OddsApiEvent): Market | null {
     };
   });
 
-  const options: MarketOption[] = [...h2hOptions, ...spreadOptions, ...totalOptions].map((option, i) => {
-    return {
-      ...option,
-      id: option.id || `o-${event.id}-${i}`,
-    };
-  });
+  const options: MarketOption[] = [...h2hOptions, ...spreadOptions, ...totalOptions].map((option, i) => ({
+    ...option,
+    id: option.id || `o-${event.id}-${i}`,
+  }));
 
   const commenceTime = new Date(event.commence_time);
   const now = new Date();
@@ -204,13 +182,13 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Match dashboard columns: moneyline, spread, total (Odds API usage scales with markets requested). */
+/** Match dashboard columns: moneyline, spread, total */
 const ODDS_MARKETS_PARAM = 'markets=h2h,spreads,totals&oddsFormat=decimal';
 
 async function fetchOddsForSport(sportKey: string, region: string): Promise<OddsApiEvent[]> {
   const url = sportKey === 'upcoming'
-    ? `${API_BASE}/odds?regions=${region}&${ODDS_MARKETS_PARAM}`
-    : `${API_BASE}/odds/${sportKey}?regions=${region}&${ODDS_MARKETS_PARAM}`;
+      ? `${API_BASE}/odds?regions=${region}&${ODDS_MARKETS_PARAM}`
+      : `${API_BASE}/odds/${sportKey}?regions=${region}&${ODDS_MARKETS_PARAM}`;
 
   const load = async (): Promise<Response> => fetch(url);
   let res = await load();
@@ -222,15 +200,15 @@ async function fetchOddsForSport(sportKey: string, region: string): Promise<Odds
   const payload: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     const msg =
-      payload &&
-      typeof payload === 'object' &&
-      payload !== null &&
-      'message' in payload &&
-      typeof (payload as { message: unknown }).message === 'string'
-        ? (payload as { message: string }).message
-        : typeof payload === 'string'
-          ? payload
-          : JSON.stringify(payload ?? {}).slice(0, 200);
+        payload &&
+        typeof payload === 'object' &&
+        payload !== null &&
+        'message' in payload &&
+        typeof (payload as { message: unknown }).message === 'string'
+            ? (payload as { message: string }).message
+            : typeof payload === 'string'
+                ? payload
+                : JSON.stringify(payload ?? {}).slice(0, 200);
     throw new Error(`Odds API ${res.status}: ${msg}`);
   }
   if (!Array.isArray(payload)) {
@@ -287,3 +265,67 @@ export async function fetchUpcomingOdds(region = 'us'): Promise<Market[]> {
   return fetchMarketsForSportTab('ALL', region);
 }
 
+// ─────────────────────────────────────────────────────────────────
+//  BET OF THE DAY
+// ─────────────────────────────────────────────────────────────────
+
+/** League priority for picking the best game of the day. */
+const LEAGUE_PRIORITY = ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAF', 'NCAA'];
+
+/**
+ * Fetches upcoming odds, picks the best game starting within the next 24 hours,
+ * and saves it as today's bet of the day in Firestore.
+ *
+ * Call this once per day — either manually (e.g. a temporary button) or
+ * via a scheduled Cloud Function later.
+ *
+ * Every user then reads from the single Firestore doc with no extra API calls.
+ *
+ * @param region  Odds API region (default 'us')
+ * @returns The saved BetOfTheDay, or null if no eligible games were found.
+ */
+export async function fetchAndSetBetOfTheDay(region = 'us'): Promise<BetOfTheDay | null> {
+  const now = new Date();
+  const in24hrs = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  // Single API call — fetch all upcoming events
+  const markets = await fetchUpcomingOdds(region);
+
+  // Only games that start within the next 24 hours and have at least 2 options
+  const eligible = markets.filter(m => {
+    if (!m.startTime) return false;
+    const start = new Date(m.startTime);
+    return start > now && start <= in24hrs && m.options.length >= 2;
+  });
+
+  if (eligible.length === 0) return null;
+
+  // Sort by league priority, then earliest start time as tiebreak
+  const sorted = [...eligible].sort((a, b) => {
+    const aIdx = LEAGUE_PRIORITY.findIndex(l => a.subtitle?.includes(l));
+    const bIdx = LEAGUE_PRIORITY.findIndex(l => b.subtitle?.includes(l));
+    const aPriority = aIdx === -1 ? LEAGUE_PRIORITY.length : aIdx;
+    const bPriority = bIdx === -1 ? LEAGUE_PRIORITY.length : bIdx;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
+  });
+
+  const picked = sorted[0];
+
+  const betOfTheDay: Omit<BetOfTheDay, 'createdAt'> = {
+    marketId:    picked.id,
+    marketTitle: picked.title,
+    eventId:     picked.id,
+    sportKey:    picked.sport_key ?? '',
+    startsAt:    Timestamp.fromDate(new Date(picked.startTime)),
+    options:     picked.options.map(o => ({
+      id:        o.id,
+      label:     o.label,
+      odds:      o.odds,
+      marketKey: o.marketKey ?? 'h2h',
+    })),
+  };
+
+  await setBetOfTheDay(betOfTheDay);
+  return { ...betOfTheDay, createdAt: Timestamp.now() };
+}
