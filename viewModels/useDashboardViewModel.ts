@@ -56,9 +56,9 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     getFriends(localStorage.uid).then((list) => {
       setFriends(list)
     })
-    loadCommunityActivity().then((list) => {
-      setActivities(list)
-      setBetList(betList)
+    loadCommunityActivity().then(({ activities, bets }) => {
+      setActivities(activities);
+      setBetList(bets);
     })
     let cancelled = false;
     getTopUsers()

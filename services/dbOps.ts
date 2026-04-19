@@ -1008,9 +1008,27 @@ export async function addFriend(name: string, currUid: string) {
     }
 }
 
-export async function loadCommunityActivity() : Promise<SocialActivity[]> {
+export interface CommunityActivity {
+    activities: SocialActivity[];
+    bets: Bet[];
+}
+
+/**
+ * Loads every public bet document and returns both:
+ *   - a SocialActivity[] for the activity feed UI
+ *   - a Bet[] of the same docs (fully populated, including the head-to-head
+ *     fields eventId/sportKey/eventStartsAt/status/userID) so callers can
+ *     resolve full bet details without re-fetching
+ *
+ * Callers that only want the activity feed may keep using the legacy
+ * Promise<SocialActivity[]> shape via the .activities field on the result.
+ *
+ * @author Aidan Rodriguez (original); extended to return bets for H2H lookup
+ */
+export async function loadCommunityActivity() : Promise<CommunityActivity> {
     const querySnapshot = await getDocs(collection(db, "bets"))
-    var socialActivityList : SocialActivity[] = []
+    const socialActivityList : SocialActivity[] = []
+    const fullBetList : Bet[] = []
 
     for (const docSnap of querySnapshot.docs) {
         const data = docSnap.data();
@@ -1057,22 +1075,35 @@ export async function loadCommunityActivity() : Promise<SocialActivity[]> {
             }
         }
 
-
+        // Build a fully-populated Bet so the activity feed's Counter-Bet
+        // button has every field fadeEligibility() needs. The legacy
+        // betList push (kept for backwards compat with anything else that
+        // imports it from authService) intentionally uses the same object.
+        const placedAtRaw     = data["placedAt"]      as Timestamp | undefined;
+        const eventStartsRaw  = data["eventStartsAt"] as Timestamp | undefined;
+        const settledAtRaw    = data["settledAt"]     as Timestamp | undefined;
         const newBet : Bet = {
-            id: docSnap.id,
-            marketId: data["marketId"],
-            marketTitle: data["marketTitle"],
-            optionLabel: data["optionLabel"],
-            stake: data["stake"],
-            odds: data["odds"],
-            potentialPayout: data["potentialPayout"],
-            placedAt: data["placedAt"]
+            id:              docSnap.id,
+            userID:          String(data["userID"] ?? ""),
+            marketId:        String(data["marketId"]    ?? ""),
+            marketTitle:     String(data["marketTitle"] ?? ""),
+            optionLabel:     String(data["optionLabel"] ?? ""),
+            betType:         data["betType"] === "parlay" ? "parlay" : "single",
+            stake:           Number(data["stake"])           || 0,
+            odds:            Number(data["odds"])            || 0,
+            potentialPayout: Number(data["potentialPayout"]) || 0,
+            placedAt:        placedAtRaw?.toDate?.() ?? new Date(0),
+            status:          (data["status"] ?? "PENDING") as BetStatus,
+            eventId:         data["eventId"]  ? String(data["eventId"])  : undefined,
+            sportKey:        data["sportKey"] ? String(data["sportKey"]) : undefined,
+            eventStartsAt:   eventStartsRaw?.toDate?.(),
+            settledAt:       settledAtRaw?.toDate?.(),
         }
         betList.push(newBet)
+        fullBetList.push(newBet)
         socialActivityList.push(newSocialActivity)
     }
-    console.log(betList)
-    return socialActivityList
+    return { activities: socialActivityList, bets: fullBetList }
 }
 
 export async function sendFriendRequest(username : string, senderUid : string) {
