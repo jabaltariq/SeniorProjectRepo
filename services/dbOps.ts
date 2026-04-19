@@ -1015,9 +1015,10 @@ export async function loadCommunityActivity() : Promise<SocialActivity[]> {
     for (const docSnap of querySnapshot.docs) {
         const data = docSnap.data();
 
-        var isSingleBet = (data["betType"] == undefined);
-        if (!isSingleBet) {
-            console.log("throwing out parlay document")
+        // Skip explicit parlays. Legacy bets written before the schema added
+        // betType have it `undefined` and should be treated as singles, so the
+        // check is "is this an explicit parlay?", not "is betType set?".
+        if (data["betType"] === "parlay") {
             continue;
         }
 
