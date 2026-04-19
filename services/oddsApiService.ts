@@ -292,9 +292,12 @@ export async function fetchAndSetBetOfTheDay(region = 'us'): Promise<BetOfTheDay
   const markets = await fetchUpcomingOdds(region);
 
   // Only games that start within the next 24 hours and have at least 2 options
+  // const in2hrs = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
   const eligible = markets.filter(m => {
     if (!m.startTime) return false;
     const start = new Date(m.startTime);
+    // Must start at least 2 hours from now so users have time to claim
     return start > now && start <= in24hrs && m.options.length >= 2;
   });
 

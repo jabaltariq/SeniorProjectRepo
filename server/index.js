@@ -31,6 +31,9 @@ app.use(express.json());
 // First run is delayed 30 s after boot so Firebase Admin has time to init.
 const SETTLEMENT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
+// const SETTLEMENT_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+
+
 async function runSettlement() {
   try {
     console.log('[settlement] Running job…');

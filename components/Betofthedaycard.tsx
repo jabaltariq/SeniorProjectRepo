@@ -44,10 +44,7 @@ export const BetOfTheDayCard: React.FC<BetOfTheDayCardProps> = ({ uid }) => {
         }
 
         const now = Timestamp.now();
-        if (now.seconds >= todaysBet.startsAt.seconds) {
-            setCardState('locked');
-            return;
-        }
+
 
         setCardState('ready');
     }
@@ -156,10 +153,12 @@ export const BetOfTheDayCard: React.FC<BetOfTheDayCardProps> = ({ uid }) => {
 
             case 'locked':
                 return (
+
                     <div className="flex items-center gap-2 text-slate-400 text-xs py-4 justify-center">
                         <Lock size={14} />
-                        <span>This event has already started — the free bet is locked for today.</span>
+                        <span>Today's game has ended. Check back tomorrow!</span>
                     </div>
+
                 );
 
             case 'already_claimed':

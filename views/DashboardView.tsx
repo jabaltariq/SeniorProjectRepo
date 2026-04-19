@@ -30,9 +30,11 @@ import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
 import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
-import { BetOfTheDayCard } from '../components/BetofthedayCard';
+import { BetOfTheDayCard } from '../components/Betofthedaycard';
+import { BoostsCard } from '../components/Boostcard';
 import { ProfileView } from './ProfileView';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
+import { BoostType } from '@/services/dbOps.ts';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
@@ -88,7 +90,7 @@ interface DashboardViewProps {
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
-  onPlaceBet: (stake: number, betType?: 'single' | 'parlay') => void;
+  onPlaceBet: (stake: number, betType?: 'single' | 'parlay', boost?: BoostType | null, onBoostUsed?: () => void) => void;
   onClearBet: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
   onDailyBonus: () => void;
@@ -144,7 +146,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const view = pathToView(location.pathname);
   const [marketLayoutMode, setMarketLayoutMode] = useState<'DISCOVER' | 'ALL_LEAGUES'>('DISCOVER');
 
-  // ── Grab uid once for BetOfTheDayCard ──────────────────────────
+  // ── Boost state — lives here so BetSlip and BoostsCard share it ─
+  const [activeBoost, setActiveBoost] = useState<BoostType | null>(null);
+
+  const handlePlaceBetWithBoost = (stake: number, betType?: 'single' | 'parlay') => {
+    console.log('handlePlaceBetWithBoost called, activeBoost:', activeBoost);
+    onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null));
+  };
+
+
+  // ── Grab uid once for sidebar cards ────────────────────────────
   const uid = localStorage.getItem('uid') ?? '';
 
   const splitTeams = (title: string) => {
@@ -371,6 +382,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             <Sparkles size={12} />
                             Boosts
                           </button>
+                          {/* Weekly Boosts card — sits under the Boosts button */}
+                          {uid && (
+                              <BoostsCard
+                                  uid={uid}
+                                  activeBoost={activeBoost}
+                                  onSelectBoost={setActiveBoost}
+                              />
+                          )}
 
                           {/* ── Promotions button — expands BetOfTheDayCard below ── */}
                           <div className="space-y-1">
@@ -738,9 +757,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 parlaySelections={parlaySelections}
                 activeBets={props.activeBets}
                 onClear={onClearBet}
-                onPlaceBet={onPlaceBet}
+                onPlaceBet={handlePlaceBetWithBoost}
                 onSelectBet={onSelectBet}
                 balance={balance}
+                activeBoost={activeBoost}
             />
         )}
       </div>

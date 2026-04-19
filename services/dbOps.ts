@@ -251,6 +251,90 @@ export async function normalizeUserInfoDoc(uid: string): Promise<NormalizedUserI
 }
 
 // ─────────────────────────────────────────────────────────────────
+//  WEEKLY BOOSTS
+// ─────────────────────────────────────────────────────────────────
+
+export type BoostType = 'double_payout' | 'money_back';
+
+export type UserBoosts = {
+    doublePayoutUsed: boolean;
+    moneyBackUsed:    boolean;
+    lastReset:        Timestamp;
+};
+
+/**
+ * Returns the most recent Sunday at midnight UTC.
+ */
+function getLastSundayMidnight(): Date {
+    const now = new Date();
+    const day = now.getUTCDay(); // 0 = Sunday
+    const lastSunday = new Date(now);
+    lastSunday.setUTCDate(now.getUTCDate() - day);
+    lastSunday.setUTCHours(0, 0, 0, 0);
+    return lastSunday;
+}
+
+/**
+ * Gets a user's current boost state.
+ * Auto-resets if the last reset was before the most recent Sunday midnight.
+ * @param uid A user's Firebase Authentication ID.
+ */
+export async function getUserBoosts(uid: string): Promise<UserBoosts> {
+    const userRef = doc(db, "userInfo", uid);
+    const snap = await getDoc(userRef);
+
+    const lastSunday = getLastSundayMidnight();
+    const defaultBoosts: UserBoosts = {
+        doublePayoutUsed: false,
+        moneyBackUsed:    false,
+        lastReset:        Timestamp.fromDate(lastSunday),
+    };
+
+    if (!snap.exists()) return defaultBoosts;
+
+    const data = snap.data();
+    const raw = data.boosts;
+
+    // No boosts field yet — write defaults and return
+    if (!raw) {
+        await setDoc(userRef, { boosts: defaultBoosts }, { merge: true });
+        return defaultBoosts;
+    }
+
+    const lastReset = raw.lastReset as Timestamp;
+
+    // If last reset was before this Sunday — reset boosts
+    if (lastReset.toDate() < lastSunday) {
+        const freshBoosts: UserBoosts = {
+            doublePayoutUsed: false,
+            moneyBackUsed:    false,
+            lastReset:        Timestamp.fromDate(lastSunday),
+        };
+        await setDoc(userRef, { boosts: freshBoosts }, { merge: true });
+        return freshBoosts;
+    }
+
+    return {
+        doublePayoutUsed: raw.doublePayoutUsed ?? false,
+        moneyBackUsed:    raw.moneyBackUsed    ?? false,
+        lastReset,
+    };
+}
+
+/**
+ * Marks a specific boost as used for the week.
+ * Called atomically inside placeSingleBet when a boost is applied.
+ * @param uid       A user's Firebase Authentication ID.
+ * @param boostType Which boost to mark as used.
+ */
+export async function markBoostUsed(uid: string, boostType: BoostType): Promise<void> {
+    const field = boostType === 'double_payout' ? 'boosts.doublePayoutUsed' : 'boosts.moneyBackUsed';
+    await setDoc(doc(db, "userInfo", uid), {
+        [field]: true,
+    }, { merge: true });
+}
+
+// ─────────────────────────────────────────────────────────────────
 //  BETTING
 // ─────────────────────────────────────────────────────────────────
 
@@ -284,14 +368,15 @@ export async function addBet(uid: string, bet: Bet) {
 
 export type PlaceSingleBetResult =
     | { success: true; newBalance: number }
-    | { success: false; error: "USER_NOT_FOUND" | "INVALID_STAKE" | "INSUFFICIENT_FUNDS" | "UNKNOWN" };
+    | { success: false; error: "USER_NOT_FOUND" | "INVALID_STAKE" | "INSUFFICIENT_FUNDS" | "BOOST_ALREADY_USED" | "UNKNOWN" };
 
 /**
  * Places a single or parlay bet and debits funds atomically in Firestore.
  * Avoids race conditions from separate read/write calls.
- * @author Aidan Rodriguez (updated for settlement)
+ * Optionally applies a weekly boost (double_payout or money_back) to the bet.
+ * @author Aidan Rodriguez (updated for settlement + boosts)
  */
-export async function placeSingleBet(uid: string, bet: Bet): Promise<PlaceSingleBetResult> {
+export async function placeSingleBet(uid: string, bet: Bet, boost: BoostType | null = null): Promise<PlaceSingleBetResult> {
     if (!Number.isFinite(bet.stake) || bet.stake <= 0) {
         return { success: false, error: "INVALID_STAKE" };
     }
@@ -306,6 +391,13 @@ export async function placeSingleBet(uid: string, bet: Bet): Promise<PlaceSingle
 
             const currentMoney = Number(userSnap.data().money) || 0;
             if (currentMoney < bet.stake) throw new Error("INSUFFICIENT_FUNDS");
+
+            // Validate boost hasn't already been used this week
+            if (boost) {
+                const boosts = userSnap.data().boosts;
+                const field = boost === 'double_payout' ? 'doublePayoutUsed' : 'moneyBackUsed';
+                if (boosts?.[field] === true) throw new Error("BOOST_ALREADY_USED");
+            }
 
             const nextMoney = currentMoney - bet.stake;
 
@@ -330,14 +422,24 @@ export async function placeSingleBet(uid: string, bet: Bet): Promise<PlaceSingle
                 odds:            bet.odds,
                 potentialPayout: bet.potentialPayout,
                 placedAt:        Timestamp.fromDate(bet.placedAt),
-                // ── Settlement fields ──────────────────────────────────
                 status:          "PENDING",
                 eventId:         bet.eventId  ?? bet.marketId,
                 sportKey:        bet.sportKey ?? "",
-                // ──────────────────────────────────────────────────────
+                isFree:          false,
+                boostApplied:    boost ?? null,
             });
 
-            transaction.set(userRef, { money: nextMoney }, { merge: true });
+            // Mark boost as used and deduct stake atomically
+            const userUpdate: Record<string, unknown> = { money: nextMoney };
+            if (boost) {
+                const field = boost === 'double_payout' ? 'boosts.doublePayoutUsed' : 'boosts.moneyBackUsed';
+                userUpdate[field] = true;
+            }
+            transaction.update(userRef, { money: nextMoney });
+            if (boost) {
+                const field = boost === 'double_payout' ? 'boosts.doublePayoutUsed' : 'boosts.moneyBackUsed';
+                transaction.update(userRef, { [field]: true });
+            }
             return nextMoney;
         });
 
@@ -345,8 +447,9 @@ export async function placeSingleBet(uid: string, bet: Bet): Promise<PlaceSingle
         return { success: true, newBalance };
     } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        if (message === "USER_NOT_FOUND")    return { success: false, error: "USER_NOT_FOUND" };
+        if (message === "USER_NOT_FOUND")     return { success: false, error: "USER_NOT_FOUND" };
         if (message === "INSUFFICIENT_FUNDS") return { success: false, error: "INSUFFICIENT_FUNDS" };
+        if (message === "BOOST_ALREADY_USED") return { success: false, error: "BOOST_ALREADY_USED" };
         return { success: false, error: "UNKNOWN" };
     }
 }
@@ -449,8 +552,12 @@ export async function getPendingBets(): Promise<Bet[]> {
 }
 
 /**
- * Marks a bet as WON or LOST and updates the user's wallet and record atomically.
+ * Marks a bet as WON, LOST, or VOID and updates the user's wallet and record atomically.
  * Called by the settlement service after a game is confirmed completed.
+ *
+ * Boost effects:
+ *   double_payout — on a WIN, pays (potentialPayout - stake) extra (doubles the profit)
+ *   money_back    — on a LOSS, refunds the stake in full
  * Free bets (isFree: true) pay out stake + profit on a win since nothing was deducted on placement.
  * Free bets that are LOST or VOID require no money change since nothing was deducted.
  */
@@ -465,18 +572,33 @@ export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Prom
 
     // 2. Update user wallet and record
     const userRef = doc(db, "userInfo", bet.userID);
+    const boost = (bet as any).boostApplied as BoostType | null ?? null;
+
     if (result === "WON") {
-        // isFree bets never had stake deducted so potentialPayout (stake + profit) is correct as-is
+        let payout = bet.potentialPayout;
+        // double_payout: add the profit again (doubles profit, not stake)
+        if (boost === 'double_payout' && !bet.isFree) {
+            const profit = bet.potentialPayout - bet.stake;
+            payout = bet.potentialPayout + profit;
+        }
         batch.update(userRef, {
-            money: increment(bet.potentialPayout),
+            money: increment(payout),
             wins:  increment(1),
         });
     } else if (result === "LOST") {
-        batch.update(userRef, {
-            losses: increment(1),
-        });
+        // money_back: refund the stake in full
+        if (boost === 'money_back' && !bet.isFree) {
+            batch.update(userRef, {
+                money:  increment(bet.stake),
+                losses: increment(1),
+            });
+        } else {
+            batch.update(userRef, {
+                losses: increment(1),
+            });
+        }
     }
-    // VOID: cancelled bet — no payout, no win/loss recorded
+    // VOID: cancelled — no payout, no win/loss recorded
 
     await batch.commit();
 }
@@ -576,7 +698,7 @@ export async function placeFreeBet(
                 ? 1 + odds / 100
                 : 1 + 100 / Math.abs(odds))
         ).toFixed(2));
-
+        // console.log('placing bet with boost:', boost);
         await runTransaction(db, async (transaction) => {
             const userRef = doc(db, "userInfo", uid);
             const userSnap = await transaction.get(userRef);
