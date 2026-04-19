@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, {useEffect, useState} from 'react';
 import { NavLink } from 'react-router-dom';
 import {Bet, Friend, SocialActivity} from '../models';
 import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';

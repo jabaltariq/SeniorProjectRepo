@@ -7,7 +7,7 @@ import {
   claimedDaily,
   getBets,
   getUserMoney,
-  addBet,
+  addBet, listenForChange,
 } from '@/services/dbOps';
 import { BoostType } from '@/services/dbOps';
 
