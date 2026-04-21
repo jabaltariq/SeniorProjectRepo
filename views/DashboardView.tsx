@@ -37,7 +37,7 @@ import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 
-type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE';
+type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'MESSAGING';
 
 function pathToView(pathname: string): DashboardViewType {
   const normalized = pathname.replace(/^\/bethub\/?/, '').replace(/^\//, '');
@@ -57,6 +57,8 @@ function pathToView(pathname: string): DashboardViewType {
       return 'LEADERBOARD';
     case 'history':
       return 'HISTORY';
+    case 'messaging':
+      return 'MESSAGING';
     default:
       return 'HOME';
   }
@@ -251,7 +253,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} userPrivacy={userPrivacy} friendRequests={friendReqs} userName={userName}/>;
-        /*
+        case 'MESSAGING':
+            return <MessageView />;
       case 'PROFILE':
         return (
           <ProfileView
@@ -672,6 +675,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink to="/profile" title="Profile" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <User size={24} />
             </NavLink>
+              <NavLink to="/messaging" title="Messaging" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
+                  <User size={24} />
+              </NavLink>
+
           </div>
           <div className="hidden lg:mt-auto lg:block">
             <div className="flex flex-col items-center gap-2">
