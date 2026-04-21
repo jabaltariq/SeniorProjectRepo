@@ -22,7 +22,7 @@ import {
   Compass,
   Sparkles,
   CircleDot,
-  User,
+  User, MessageCircle,
 } from 'lucide-react';
 import type { Market, MarketOption, Bet } from '../models';
 import { BetSlip } from '../components/BetSlip';
@@ -36,6 +36,7 @@ import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
+import {MessageView} from "@/components/MessageView.tsx";
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'MESSAGING';
 
@@ -254,7 +255,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'SOCIAL':
         return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} userPrivacy={userPrivacy} friendRequests={friendReqs} userName={userName}/>;
         case 'MESSAGING':
-            return <MessageView />;
+            return <MessageView friends={friends} />;
       case 'PROFILE':
         return (
           <ProfileView
@@ -676,7 +677,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <User size={24} />
             </NavLink>
               <NavLink to="/messaging" title="Messaging" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-                  <User size={24} />
+                  <MessageCircle size={24} />
               </NavLink>
 
           </div>
