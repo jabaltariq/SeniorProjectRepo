@@ -96,3 +96,10 @@ export interface Challenge {
   stake: number;
   status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'COMPLETED';
 }
+
+export interface Message {
+  id: string;
+  sender: 'current' | 'other'
+  text: string;
+  timestamp: Date;
+}

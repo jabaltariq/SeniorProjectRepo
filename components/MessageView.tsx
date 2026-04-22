@@ -1,17 +1,12 @@
 import React, {useEffect, useState, useRef} from 'react';
-import {Bet, Friend, SocialActivity} from "@/models";
+import {Bet, Friend, Message, SocialActivity} from "@/models";
 
 interface MessageViewProps {
     friends: Friend[];
 }
 
-interface Message {
-    id: string;
-    sender: 'current' | 'other'
-    text: string;
-    timestamp: Date;
-}
-export const MessageView : React.FC<MessageViewProps> = ({friends, messages}) => {
+
+export const MessageView : React.FC<MessageViewProps> = ({friends, importMessages}) => {
     const [messagesList, setMessagesList] = useState<Message[]>([
         {
             id: '1',
@@ -20,6 +15,8 @@ export const MessageView : React.FC<MessageViewProps> = ({friends, messages}) =>
             timestamp: new Date(),
         },
     ])
+
+    const [currMessages, setCurrMessages] = useState<Message[]>([]);
 
     const [input, setInput] = useState('');
     const bottomRef = useRef<HTMLDivElement | null>(null);
