@@ -15,6 +15,10 @@ import {
   Check,
 } from 'lucide-react';
 import { getSpendingLimits, setSpendingLimits, SpendingLimits } from '@/services/dbOps.ts';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
+import { APP } from '@/models/constants.ts';
+
 
 interface SettingsViewProps {
   userEmail: string;
@@ -29,6 +33,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded 
   const [saving, setSaving]                 = useState(false);
   const [saved, setSaved]                   = useState(false);
   const [inputError, setInputError]         = useState<string | null>(null);
+  const [resetSent, setResetSent]           = useState(false);
+  const [resetError, setResetError]         = useState<string | null>(null);
 
   const uid = localStorage.getItem('uid') ?? '';
 
@@ -69,6 +75,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded 
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const handlePasswordReset = async () => {
+    setResetError(null);
+    try {
+      await sendPasswordResetEmail(getAuth(), userEmail);
+      setResetSent(true);
+      setTimeout(() => setResetSent(false), 4000);
+    } catch (e) {
+      setResetError('Failed to send reset email. Try again.');
+      setTimeout(() => setResetError(null), 4000);
+    }
+  };
+
   const formatSpent = (spent: number, limit: number | null) => {
     if (limit == null) return null;
     return `$${spent.toFixed(0)} of $${limit.toFixed(0)} spent`;
@@ -107,15 +125,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded 
                 </div>
                 <ChevronRight className="text-slate-500" size={18} />
               </button>
-              <button className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-slate-800/30 transition-colors">
+
+              {/* Password reset */}
+              <button
+                  onClick={handlePasswordReset}
+                  className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-slate-800/30 transition-colors"
+              >
                 <div className="flex items-center gap-3">
                   <Lock className="text-slate-500" size={18} />
                   <div>
                     <p className="font-medium text-slate-200">Password</p>
-                    <p className="text-xs text-slate-500">Change your password</p>
+                    <p className={`text-xs ${resetSent ? 'text-emerald-400' : resetError ? 'text-red-400' : 'text-slate-500'}`}>
+                      {resetSent
+                          ? '✓ Reset email sent — check your inbox'
+                          : resetError
+                              ? resetError
+                              : 'Send a password reset email'}
+                    </p>
                   </div>
                 </div>
-                <ChevronRight className="text-slate-500" size={18} />
+                {resetSent
+                    ? <Check className="text-emerald-400" size={18} />
+                    : <ChevronRight className="text-slate-500" size={18} />
+                }
               </button>
             </div>
           </section>
@@ -215,8 +247,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded 
                           </div>
                           {limits?.daily != null && (
                               <span className="text-[10px] text-slate-500 whitespace-nowrap">
-                          {formatSpent(limits.dailySpent, limits.daily)}
-                        </span>
+                                {formatSpent(limits.dailySpent, limits.daily)}
+                              </span>
                           )}
                         </div>
                       </div>
@@ -243,8 +275,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded 
                           </div>
                           {limits?.weekly != null && (
                               <span className="text-[10px] text-slate-500 whitespace-nowrap">
-                          {formatSpent(limits.weeklySpent, limits.weekly)}
-                        </span>
+                                {formatSpent(limits.weeklySpent, limits.weekly)}
+                              </span>
                           )}
                         </div>
                       </div>
