@@ -8,3 +8,141 @@
 #root {
   min-height: 100vh;
 }
+
+:root[data-theme='light'] .app-shell {
+  color: #0f172a;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 55%, #e2e8f0 100%) !important;
+}
+
+:root[data-theme='light'] .app-shell [class*='text-slate-100'],
+:root[data-theme='light'] .app-shell [class*='text-slate-200'],
+:root[data-theme='light'] .app-shell [class*='text-slate-300'],
+:root[data-theme='light'] .app-shell [class*='text-slate-400'],
+:root[data-theme='light'] .app-shell [class*='text-slate-500'],
+:root[data-theme='light'] .app-shell [class*='text-slate-600'] {
+  color: #334155 !important;
+}
+
+:root[data-theme='light'] .app-shell [class*='text-white'] {
+  color: #0f172a !important;
+}
+
+:root[data-theme='light'] .app-shell [class*='border-slate-7'],
+:root[data-theme='light'] .app-shell [class*='border-slate-8'],
+:root[data-theme='light'] .app-shell [class*='border-slate-9'] {
+  border-color: #d1d9e6 !important;
+}
+
+:root[data-theme='light'] .app-header-card,
+:root[data-theme='light'] .glass-card,
+:root[data-theme='light'] .site-footer,
+:root[data-theme='light'] .app-shell [class*='bg-slate-8'],
+:root[data-theme='light'] .app-shell [class*='bg-slate-9'] {
+  border-color: #d6deea !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  box-shadow: 0 8px 24px rgba(100, 116, 139, 0.12);
+}
+
+:root[data-theme='light'] .site-footer p,
+:root[data-theme='light'] .site-footer a {
+  color: #334155 !important;
+}
+
+:root[data-theme='light'] .app-shell [class*='text-blue-400'],
+:root[data-theme='light'] .app-shell [class*='text-blue-300'] {
+  color: #2563eb !important;
+}
+
+:root[data-theme='light'] .app-shell nav[class*='from-slate-900'] {
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%) !important;
+  border-right-color: #d6deea !important;
+}
+
+:root[data-theme='light'] .app-shell .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+:root[data-theme='light'] .betslip-shell {
+  background: #e5e7eb !important;
+  border-left-color: #cbd5e1 !important;
+  border-top-color: #cbd5e1 !important;
+}
+
+:root[data-theme='light'] .betslip-shell [class*='bg-slate-900'],
+:root[data-theme='light'] .betslip-shell [class*='bg-slate-800'],
+:root[data-theme='light'] .betslip-shell [class*='bg-[#100d1f]'] {
+  background: #f8fafc !important;
+}
+
+:root[data-theme='light'] .betslip-shell [class*='text-violet-300'],
+:root[data-theme='light'] .betslip-shell [class*='text-violet-200'] {
+  color: #4f46e5 !important;
+}
+
+:root[data-theme='light'] .market-top-pill {
+  border-color: #cdd6e5 !important;
+  background: #f8fafc !important;
+  color: #334155 !important;
+}
+
+:root[data-theme='light'] .market-odds-btn {
+  border-color: #cdd6e5 !important;
+  background: #e2e8f0 !important;
+}
+
+:root[data-theme='light'] .market-odds-btn:hover {
+  border-color: #94a3b8 !important;
+  background: #dbe3ef !important;
+}
+
+:root[data-theme='light'] .market-odds-btn p:last-child {
+  color: #1e293b !important;
+}
+
+:root[data-theme='light'] .market-odds-btn[class*='border-violet-400'] {
+  border-color: #4f46e5 !important;
+  background: #4f46e5 !important;
+  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.2) !important;
+}
+
+:root[data-theme='light'] .market-odds-btn[class*='border-violet-400'] p {
+  color: #ffffff !important;
+}
+
+:root[data-theme='light'] .betslip-shell [class*='bg-gradient-to-b'] {
+  background: #eef2f7 !important;
+}
+
+:root[data-theme='light'] .betslip-shell [class*='text-emerald-300'] {
+  color: #047857 !important;
+}
+
+:root[data-theme='light'] .home-landing-header {
+  background: #ffffff !important;
+  color: #1e293b !important;
+  border-bottom-color: #dbe3ef !important;
+}
+
+:root[data-theme='light'] .home-landing-panel {
+  border-color: #dbe3ef !important;
+  background: #e2e8f0 !important;
+}
+
+:root[data-theme='light'] .home-landing-panel .home-landing-overlay {
+  filter: saturate(0.8) brightness(1.02);
+}
+
+:root[data-theme='light'] .home-landing-panel h2,
+:root[data-theme='light'] .home-landing-panel p {
+  color: #0f172a !important;
+}
+
+:root[data-theme='light'] .home-ghost-btn {
+  color: #1e293b !important;
+  border-color: #94a3b8 !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+}
+
+:root[data-theme='light'] .home-ghost-btn:hover {
+  background: rgba(255, 255, 255, 0.9) !important;
+}

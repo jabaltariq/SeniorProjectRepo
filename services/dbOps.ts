@@ -142,6 +142,23 @@ export async function getUserPrivacy(uid: string) : Promise<boolean> {
     }
 }
 
+export type UserThemeMode = "ocean" | "light";
+
+export async function setUserTheme(uid: string, themeMode: UserThemeMode) {
+    await setDoc(doc(db, "userInfo", uid), {
+        themeMode
+    }, { merge: true });
+}
+
+export async function getUserTheme(uid: string): Promise<UserThemeMode> {
+    const documentReference = doc(db, "userInfo", uid);
+    const documentSnapshot = await getDoc(documentReference);
+
+    if (!documentSnapshot.exists()) return "ocean";
+    const data = documentSnapshot.data();
+    return data["themeMode"] === "light" ? "light" : "ocean";
+}
+
 export async function getFriendRequestsAsName(requests : FriendRequest[]) : Promise<FriendRequest[]> {
     var friendRequestsAsName: FriendRequest[] = [];
     for (const item of requests) {

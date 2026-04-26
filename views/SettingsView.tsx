@@ -4,6 +4,9 @@ import {
   User,
   Bell,
   Shield,
+  Palette,
+  Sun,
+  Moon,
   Wallet,
   Lock,
   Globe,
@@ -11,13 +14,25 @@ import {
   ChevronLeft,
   Mail,
 } from 'lucide-react';
+import type { UserThemeMode } from '@/services/dbOps';
 
 interface SettingsViewProps {
   userEmail: string;
   embedded?: boolean;
+  themeMode: UserThemeMode;
+  themeSaving: boolean;
+  onThemeModeChange: (mode: UserThemeMode) => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded = false }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({
+  userEmail,
+  embedded = false,
+  themeMode,
+  themeSaving,
+  onThemeModeChange,
+}) => {
+  const isLightMode = themeMode === 'light';
+
   return (
     <div className="animate-in fade-in duration-500 max-w-2xl">
       {!embedded && (
@@ -60,6 +75,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ userEmail, embedded 
               </div>
               <ChevronRight className="text-slate-500" size={18} />
             </button>
+            <div className="w-full px-6 py-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <Palette className="text-slate-500" size={18} />
+                <div>
+                  <p className="font-medium text-slate-200">Preferences - Light mode</p>
+                  <p className="text-xs text-slate-500">Switch between Ocean and Light theme.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onThemeModeChange(isLightMode ? 'ocean' : 'light')}
+                disabled={themeSaving}
+                className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors ${
+                  isLightMode ? 'bg-amber-500' : 'bg-blue-600'
+                } ${themeSaving ? 'cursor-wait opacity-70' : 'cursor-pointer'}`}
+                aria-pressed={isLightMode}
+                aria-label="Toggle light mode"
+              >
+                <span
+                  className={`absolute inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-slate-700 shadow transition-transform ${
+                    isLightMode ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                >
+                  {isLightMode ? <Sun size={12} /> : <Moon size={12} />}
+                </span>
+              </button>
+            </div>
           </div>
         </section>
 

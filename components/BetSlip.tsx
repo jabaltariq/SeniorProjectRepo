@@ -161,7 +161,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
 
   return (
       <div className="fixed bottom-0 left-0 right-0 z-50 lg:static lg:z-auto lg:shrink-0 lg:w-[330px] lg:min-h-0 lg:h-full lg:overflow-y-auto lg:overscroll-contain animate-in slide-in-from-bottom lg:slide-in-from-right duration-300">
-        <div className="mx-4 mb-4 flex min-h-0 flex-col lg:mx-0 lg:mb-0 lg:min-h-full rounded-t-2xl lg:rounded-none lg:h-full p-4 lg:px-4 lg:pb-4 lg:pt-5 shadow-2xl border-t border-violet-500/40 lg:border-t-0 lg:border-l border-slate-700/70 bg-[#171427]">
+        <div className="betslip-shell mx-4 mb-4 flex min-h-0 flex-col lg:mx-0 lg:mb-0 lg:min-h-full rounded-t-2xl lg:rounded-none lg:h-full p-4 lg:px-4 lg:pb-4 lg:pt-5 shadow-2xl border-t border-violet-500/40 lg:border-t-0 lg:border-l border-slate-700/70 bg-[#171427]">
           <div className="flex items-center justify-between mb-3">
             <div className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 px-2 py-1 text-[11px]">
               <span className="text-slate-300">Balance</span>

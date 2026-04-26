@@ -61,14 +61,20 @@ interface HomeLandingProps {
   dailyBonusAvailable: boolean;
   onDailyBonus: () => void;
   onLogout: () => void;
+  isLightMode?: boolean;
 }
 
-export const HomeLanding: React.FC<HomeLandingProps> = ({ dailyBonusAvailable, onDailyBonus, onLogout }) => {
+export const HomeLanding: React.FC<HomeLandingProps> = ({
+  dailyBonusAvailable,
+  onDailyBonus,
+  onLogout,
+  isLightMode = false,
+}) => {
   const navigate = useNavigate();
 
   return (
-    <div className="flex flex-col min-h-0 h-full w-full bg-transparent">
-      <header className="shrink-0 w-full border-b border-white/10 bg-[#0c3044] text-white">
+    <div className="home-landing flex flex-col min-h-0 h-full w-full bg-transparent">
+      <header className="home-landing-header shrink-0 w-full border-b border-white/10 bg-[#0c3044] text-white">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 px-4 sm:px-6 lg:px-10 py-5 sm:py-6">
           <nav className="flex flex-wrap items-center justify-center lg:justify-start gap-x-6 gap-y-2 text-[11px] font-bold uppercase tracking-[0.12em]">
             <NavLink to="/bet" className="hover:text-amber-200/90 transition-colors">
@@ -112,12 +118,14 @@ export const HomeLanding: React.FC<HomeLandingProps> = ({ dailyBonusAvailable, o
         {PANELS.map((panel, i) => (
           <section
             key={panel.title}
-            className="relative flex min-h-[280px] min-[900px]:min-h-[360px] xl:min-h-0 xl:h-full flex-col border-b border-white/10 min-[900px]:border-r min-[900px]:last:border-r-0 xl:border-b-0 xl:border-r xl:last:border-r-0 bg-slate-900"
+            className="home-landing-panel relative flex min-h-[280px] min-[900px]:min-h-[360px] xl:min-h-0 xl:h-full flex-col border-b border-white/10 min-[900px]:border-r min-[900px]:last:border-r-0 xl:border-b-0 xl:border-r xl:last:border-r-0 bg-slate-900"
           >
             <div
-              className="absolute inset-0 bg-cover bg-center"
+              className="home-landing-overlay absolute inset-0 bg-cover bg-center"
               style={{
-                backgroundImage: `linear-gradient(to top, rgba(15, 23, 42, 0.92) 0%, rgba(15, 23, 42, 0.45) 42%, rgba(15, 23, 42, 0.25) 100%), url(${panel.image})`,
+                backgroundImage: isLightMode
+                  ? `linear-gradient(to top, rgba(248, 250, 252, 0.9) 0%, rgba(248, 250, 252, 0.62) 42%, rgba(248, 250, 252, 0.45) 100%), url(${panel.image})`
+                  : `linear-gradient(to top, rgba(15, 23, 42, 0.92) 0%, rgba(15, 23, 42, 0.45) 42%, rgba(15, 23, 42, 0.25) 100%), url(${panel.image})`,
               }}
               aria-hidden
             />
@@ -138,7 +146,7 @@ export const HomeLanding: React.FC<HomeLandingProps> = ({ dailyBonusAvailable, o
                       if (a.onClick) a.onClick();
                       else if (a.to) navigate(a.to);
                     }}
-                    className={`${ghostBtn} ${a.disabled ? 'opacity-50 pointer-events-none' : ''}`}
+                    className={`home-ghost-btn ${ghostBtn} ${a.disabled ? 'opacity-50 pointer-events-none' : ''}`}
                   >
                     {a.icon}
                     {a.label}
@@ -149,7 +157,7 @@ export const HomeLanding: React.FC<HomeLandingProps> = ({ dailyBonusAvailable, o
                     type="button"
                     onClick={onDailyBonus}
                     disabled={!dailyBonusAvailable}
-                    className={`${ghostBtn} border-amber-400/60 text-amber-50 hover:bg-amber-500/10 ${
+                    className={`home-ghost-btn ${ghostBtn} border-amber-400/60 text-amber-50 hover:bg-amber-500/10 ${
                       !dailyBonusAvailable ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >

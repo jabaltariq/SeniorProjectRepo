@@ -15,7 +15,7 @@ const supportLinks = [
 
 export const SiteFooter: React.FC = () => {
   return (
-    <footer className="px-4 py-10 text-slate-300">
+    <footer className="site-footer px-4 py-10 text-slate-300">
       <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-8 md:grid-cols-[1.7fr_1fr_1fr]">
         <div>
           <p className="text-lg font-semibold text-slate-200">BetHub</p>

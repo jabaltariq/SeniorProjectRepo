@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -41,6 +41,7 @@ import { BoostType } from '@/services/dbOps.ts';
 import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
+import type { UserThemeMode } from '@/services/dbOps';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS';
 
@@ -108,6 +109,9 @@ interface DashboardViewProps {
   onSearchChange: (query: string) => void;
   onRetryMarkets: () => void;
   onChallenge: (friend: Friend) => void;
+  themeMode: UserThemeMode;
+  themeSaving: boolean;
+  onThemeModeChange: (mode: UserThemeMode) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
@@ -146,12 +150,21 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onSearchChange,
     onRetryMarkets,
     onChallenge,
+    themeMode,
+    themeSaving,
+    onThemeModeChange,
   } = props;
 
   const location = useLocation();
   const navigate = useNavigate();
   const view = pathToView(location.pathname);
+  const isLightMode = themeMode === 'light';
   const [marketLayoutMode, setMarketLayoutMode] = useState<'DISCOVER' | 'ALL_LEAGUES'>('DISCOVER');
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = isLightMode ? 'light' : 'ocean';
+  }, [isLightMode]);
 
   // ── Boost state — lives here so BetSlip and BoostsCard share it ─
   const [activeBoost, setActiveBoost] = useState<BoostType | null>(null);
@@ -262,7 +275,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'HOME':
         return (
             <div className="animate-in fade-in duration-500 flex min-h-0 w-full flex-1 flex-col">
-              <HomeLanding dailyBonusAvailable={dailyBonusAvailable} onDailyBonus={onDailyBonus} onLogout={onLogout} />
+              <HomeLanding
+                dailyBonusAvailable={dailyBonusAvailable}
+                onDailyBonus={onDailyBonus}
+                onLogout={onLogout}
+                isLightMode={isLightMode}
+              />
             </div>
         );
       case 'LEADERBOARD':
@@ -278,6 +296,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             balance={balance}
             activeBetsCount={props.activeBets.length}
             currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
+            themeMode={themeMode}
+            themeSaving={themeSaving}
+            onThemeModeChange={onThemeModeChange}
           />
         );
       case 'HEAD_TO_HEAD':
@@ -287,7 +308,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           />
         );
       case 'SETTINGS':
-        return <SettingsView userEmail={userEmail} embedded />;
+        return (
+          <SettingsView
+            userEmail={userEmail}
+            embedded
+            themeMode={themeMode}
+            themeSaving={themeSaving}
+            onThemeModeChange={onThemeModeChange}
+          />
+        );
       case 'HISTORY':
         return (
             <div className="animate-in fade-in duration-500">
@@ -351,7 +380,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                   <div className="grid grid-cols-2 gap-1 mb-3 rounded-lg border border-slate-800 bg-slate-900 p-1">
                     <button
                         onClick={() => setMarketLayoutMode('DISCOVER')}
-                        className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
+                        className={`market-top-pill inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
                             marketLayoutMode === 'DISCOVER' ? 'bg-slate-700 text-blue-300' : 'text-slate-500 hover:text-slate-300'
                         }`}
                     >
@@ -364,7 +393,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           onSportFilter('ALL');
                           onLeagueFilter('ALL');
                         }}
-                        className={`rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
+                        className={`market-top-pill rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
                             marketLayoutMode === 'ALL_LEAGUES' ? 'bg-slate-700 text-blue-300' : 'text-slate-500 hover:text-slate-300'
                         }`}
                     >
@@ -380,7 +409,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                   key={`tile-${tab}`}
                                   onClick={() => onSportFilter(tab)}
                                   title={tab}
-                                  className={`rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
+                                  className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
                                       sportFilter === tab
                                           ? 'border-blue-500 bg-blue-600/20 text-blue-200'
                                           : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
@@ -634,7 +663,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                                   <button
                                                       key={`${opt.id}-${pairIdx}`}
                                                       onClick={() => onSelectBet(market, opt)}
-                                                      className={`w-full rounded-md border px-2.5 py-1.5 text-left transition-all ${
+                                                      className={`market-odds-btn w-full rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                                           isOptionSelected(market, opt)
                                                               ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
                                                               : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
@@ -675,7 +704,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   };
 
   return (
-      <div className="h-screen max-h-screen min-h-0 overflow-hidden bg-gradient-to-br from-slate-800 via-[#0f172a] to-slate-950 text-slate-100 flex flex-col lg:flex-row">
+      <div className={`app-shell h-screen max-h-screen min-h-0 overflow-hidden text-slate-100 flex flex-col lg:flex-row ${isLightMode ? 'bg-gradient-to-br from-slate-100 via-sky-50 to-slate-200 text-slate-900' : 'bg-gradient-to-br from-slate-800 via-[#0f172a] to-slate-950'}`}>
         {bonusMessage && (
             <div className="fixed top-4 right-4 z-50 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-sm font-medium text-green-400 shadow-lg animate-in fade-in slide-in-from-top-2">
               {bonusMessage}
@@ -732,7 +761,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           <div className={`min-h-full ${view === 'HOME' ? 'flex flex-col' : 'mx-auto flex h-full w-full max-w-6xl flex-col'}`}>
             {view !== 'HOME' && (
                 <header className="mb-7">
-                  <div className="rounded-xl border border-slate-800/90 bg-slate-900/35 px-4 py-4 lg:px-5">
+                  <div className="app-header-card rounded-xl border border-slate-800/90 bg-slate-900/35 px-4 py-4 lg:px-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <h1 className="text-[2rem] leading-none font-extrabold text-white tracking-tight">BetHub</h1>
