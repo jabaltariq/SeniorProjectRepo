@@ -9,6 +9,9 @@ import {
   getFriends,
   getTopUsers, getUserName,
   getUserPrivacy,
+  getUserTheme,
+  setUserTheme,
+  type UserThemeMode,
   loadCommunityActivity
 } from '../services/dbOps';
 
@@ -36,6 +39,8 @@ export function useDashboardViewModel(auth: AuthViewModel) {
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [userName, setUserName] = useState<string>();
   let [userPrivacy, setUserPrivacy] = useState<boolean>(false);
+  const [themeMode, setThemeMode] = useState<UserThemeMode>('ocean');
+  const [themeSaving, setThemeSaving] = useState(false);
   useEffect(() => {
     getFriendRequests(localStorage.uid).then((friendRequests) => {
       getFriendRequestsAsName(friendRequests).then((value) => {
@@ -56,6 +61,11 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     getFriends(localStorage.uid).then((list) => {
       setFriends(list)
     })
+    getUserTheme(localStorage.uid).then((theme) => {
+      setThemeMode(theme);
+    }).catch((err) => {
+      console.error('Failed to load user theme', err);
+    });
     loadCommunityActivity().then(({ activities, bets }) => {
       setActivities(activities);
       setBetList(bets);
@@ -81,6 +91,23 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     alert(`Challenge request sent to ${friend.name}! Head-to-head competition initiated.`);
   }, []);
 
+  const updateThemeMode = useCallback(async (nextThemeMode: UserThemeMode) => {
+    if (themeMode === nextThemeMode) return;
+    const uid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null;
+    if (!uid) return;
+
+    setThemeMode(nextThemeMode);
+    setThemeSaving(true);
+    try {
+      await setUserTheme(uid, nextThemeMode);
+    } catch (err) {
+      console.error('Failed to save user theme', err);
+      setThemeMode((prev) => (prev === 'light' ? 'ocean' : 'light'));
+    } finally {
+      setThemeSaving(false);
+    }
+  }, [themeMode]);
+
 
 
   return {
@@ -96,6 +123,9 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     friends: friends,
     activity: activities,
     friendReqs: friendRequests,
-    userName: userName
+    userName: userName,
+    themeMode,
+    themeSaving,
+    updateThemeMode,
   };
 }

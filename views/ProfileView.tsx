@@ -18,6 +18,7 @@ import {
   getAchievementDefinitions,
   setAccountDisplay,
   setUnlockedAchievements,
+  type UserThemeMode,
   type AccountAchievementKey,
   type AccountDisplayConfig,
   type AccountStatKey,
@@ -32,6 +33,9 @@ interface ProfileViewProps {
   balance: number;
   activeBetsCount: number;
   currentUserId?: string | null;
+  themeMode: UserThemeMode;
+  themeSaving: boolean;
+  onThemeModeChange: (mode: UserThemeMode) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -40,6 +44,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   balance,
   activeBetsCount,
   currentUserId,
+  themeMode,
+  themeSaving,
+  onThemeModeChange,
 }) => {
   // The app does not declare any <Route path="profile/:userId"> elements,
   // so useParams() returns an empty object. Parse the uid out of the pathname
@@ -327,7 +334,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       {isOwnProfile && showSettings && (
         <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/35 p-5">
-          <SettingsView userEmail={userEmail} embedded />
+          <SettingsView
+            userEmail={userEmail}
+            embedded
+            themeMode={themeMode}
+            themeSaving={themeSaving}
+            onThemeModeChange={onThemeModeChange}
+          />
         </div>
       )}
 
