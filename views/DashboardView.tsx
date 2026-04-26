@@ -32,6 +32,7 @@ import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
 import { BetOfTheDayCard } from '../components/Betofthedaycard';
 import { BoostsCard } from '../components/Boostcard';
+import { SiteFooter } from '../components/SiteFooter';
 import { ProfileView } from './ProfileView';
 import { HeadToHeadView } from './HeadToHeadView';
 import { Swords } from 'lucide-react';
@@ -41,7 +42,7 @@ import { DAILY_BONUS_AMOUNT } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 
-type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD';
+type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS';
 
 function pathToView(pathname: string): DashboardViewType {
   const normalized = pathname.replace(/^\/bethub\/?/, '').replace(/^\//, '');
@@ -63,6 +64,8 @@ function pathToView(pathname: string): DashboardViewType {
       return 'HISTORY';
     case 'head-to-head':
       return 'HEAD_TO_HEAD';
+    case 'settings':
+      return 'SETTINGS';
     default:
       return 'HOME';
   }
@@ -283,6 +286,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
           />
         );
+      case 'SETTINGS':
+        return <SettingsView userEmail={userEmail} embedded />;
       case 'HISTORY':
         return (
             <div className="animate-in fade-in duration-500">
@@ -724,44 +729,49 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         <main
             className={`flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar ${view === 'HOME' ? 'p-0 flex flex-col' : 'p-4 lg:p-8'}`}
         >
-          {view !== 'HOME' && (
-              <header className="mb-7">
-                <div className="rounded-xl border border-slate-800/90 bg-slate-900/35 px-4 py-4 lg:px-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h1 className="text-[2rem] leading-none font-extrabold text-white tracking-tight">BetHub</h1>
-                      <p className="text-slate-400 mt-2 text-sm">Simulated betting with fake currency.</p>
+          <div className={`min-h-full ${view === 'HOME' ? 'flex flex-col' : 'mx-auto flex h-full w-full max-w-6xl flex-col'}`}>
+            {view !== 'HOME' && (
+                <header className="mb-7">
+                  <div className="rounded-xl border border-slate-800/90 bg-slate-900/35 px-4 py-4 lg:px-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h1 className="text-[2rem] leading-none font-extrabold text-white tracking-tight">BetHub</h1>
+                        <p className="text-slate-400 mt-2 text-sm">Simulated betting with fake currency.</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                      <WalletIcon size={13} />
+                      Balance
+                      <span className="text-emerald-200">{displayBalance}</span>
+                    </span>
+                        <button
+                            onClick={onDailyBonus}
+                            disabled={!dailyBonusAvailable}
+                            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5 transition-all active:scale-95 ${
+                                dailyBonusAvailable
+                                    ? 'bg-indigo-600 hover:bg-indigo-500 text-indigo-50 shadow-md shadow-indigo-700/30'
+                                    : 'bg-slate-700/80 text-slate-400 cursor-not-allowed'
+                            }`}
+                        >
+                          <Trophy size={14} />
+                          {dailyBonusAvailable ? `Free Claim +$${DAILY_BONUS_AMOUNT}` : 'Claimed'}
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
-                    <WalletIcon size={13} />
-                    Balance
-                    <span className="text-emerald-200">{displayBalance}</span>
-                  </span>
-                      <button
-                          onClick={onDailyBonus}
-                          disabled={!dailyBonusAvailable}
-                          className={`px-3.5 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5 transition-all active:scale-95 ${
-                              dailyBonusAvailable
-                                  ? 'bg-indigo-600 hover:bg-indigo-500 text-indigo-50 shadow-md shadow-indigo-700/30'
-                                  : 'bg-slate-700/80 text-slate-400 cursor-not-allowed'
-                          }`}
-                      >
-                        <Trophy size={14} />
-                        {dailyBonusAvailable ? `Free Claim +$${DAILY_BONUS_AMOUNT}` : 'Claimed'}
-                      </button>
-                    </div>
+                    <div className="mt-4 border-b border-slate-800/70" />
                   </div>
-                  <div className="mt-4 border-b border-slate-800/70" />
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <button onClick={onLogout} className="lg:hidden px-4 py-2 rounded-xl text-sm text-slate-500 hover:text-slate-300 hover:bg-slate-800 flex items-center gap-2">
-                    <LogOut size={16} /> Log out
-                  </button>
-                </div>
-              </header>
-          )}
-          {renderContent()}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button onClick={onLogout} className="lg:hidden px-4 py-2 rounded-xl text-sm text-slate-500 hover:text-slate-300 hover:bg-slate-800 flex items-center gap-2">
+                      <LogOut size={16} /> Log out
+                    </button>
+                  </div>
+                </header>
+            )}
+            {renderContent()}
+            <div className="mt-auto pt-10 lg:pt-14">
+              <SiteFooter />
+            </div>
+          </div>
         </main>
 
         {view === 'MARKETS' && (
