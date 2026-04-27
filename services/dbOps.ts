@@ -1069,7 +1069,7 @@ export async function loadCommunityActivity() : Promise<CommunityActivity> {
 
         let newSocialActivity: SocialActivity;
 
-        if (userData["access"] == true) {
+        if (userData["privacy"] == false) {
             newSocialActivity = {
                 id: docSnap.id,
                 userId: documentSnapshot.id,
