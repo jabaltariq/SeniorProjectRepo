@@ -2,7 +2,7 @@
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   getBets, getFriends,
-  getLastDaily,
+  getLastDaily, getUserExclusion,
   getUserMoney,
   normalizeUserInfoDoc,
   resetRatio,
@@ -88,6 +88,9 @@ export async function login(email: string, password: string): Promise<{ success:
       }
     } else {
       dailyBonusAvailable = "true";
+    }
+    if ((await getUserExclusion(userId))) {
+      throw new Error("User has been excluded. Please contact our support team for more details.")
     }
     console.log("Created user with the following credentials:");
     console.log("ID: " + userId);
