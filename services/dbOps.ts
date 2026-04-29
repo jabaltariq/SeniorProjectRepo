@@ -150,6 +150,22 @@ export async function setUserTheme(uid: string, themeMode: UserThemeMode) {
     }, { merge: true });
 }
 
+export async function excludeUser(uid : string) {
+    await setDoc(doc(db, "userInfo", uid), {
+        excluded: true
+    }, { merge: true })
+}
+
+export async function getUserExclusion(uid : string) : Promise<boolean> {
+    const documentReference = doc(db, "userInfo", uid)
+    const documentSnapshot = await getDoc(documentReference)
+
+    if (documentSnapshot.exists()) {
+        const data = documentSnapshot.data();
+        return (data["excluded"] == true)
+    }
+}
+
 export async function getUserTheme(uid: string): Promise<UserThemeMode> {
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);

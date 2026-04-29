@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState} from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   User,
@@ -14,7 +14,8 @@ import {
   ChevronLeft,
   Mail,
 } from 'lucide-react';
-import type { UserThemeMode } from '@/services/dbOps';
+import {excludeUser, UserThemeMode} from '@/services/dbOps';
+import { getSession, logout as logoutService } from '../services/authService';
 
 interface SettingsViewProps {
   userEmail: string;
@@ -22,6 +23,7 @@ interface SettingsViewProps {
   themeMode: UserThemeMode;
   themeSaving: boolean;
   onThemeModeChange: (mode: UserThemeMode) => void;
+
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -31,6 +33,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   themeSaving,
   onThemeModeChange,
 }) => {
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleConfirm = () => {
+    setShowConfirm(false);
+    excludeUser(localStorage["uid"]).then(r => logoutService())
+  }
   const isLightMode = themeMode === 'light';
 
   return (
@@ -161,7 +169,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
               <ChevronRight className="text-slate-500" size={18} />
             </button>
-            <button className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-slate-800/30 transition-colors">
+            <button
+                className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-slate-800/30 transition-colors" onClick={() => setShowConfirm(true)}>
               <div>
                 <p className="font-medium text-slate-200">Self-exclusion</p>
                 <p className="text-xs text-slate-500">Take a break from betting</p>
@@ -199,6 +208,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </section>
       </div>
+
+      {showConfirm && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+            <div className="bg-slate-900 p-6 rounded-xl w-[90%] max-w-sm border border-slate-700">
+              <h2 className="text-lg font-semibold text-white mb-2">
+                Confirm Self-Exclusion
+              </h2>
+              <p className="text-sm text-slate-400 mb-4">
+                Are you sure you want to take a break from betting? This action may restrict your account.
+              </p>
+
+              <div className="flex justify-end gap-3">
+                <button
+                    onClick={() => setShowConfirm(false)}
+                    className="px-4 py-2 text-sm text-slate-300 hover:text-white">
+                  Cancel
+                </button>
+                <button
+                    onClick={handleConfirm}
+                    className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+      )}
     </div>
   );
 };
