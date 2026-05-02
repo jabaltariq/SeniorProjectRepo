@@ -294,11 +294,21 @@ export async function fetchAndSetBetOfTheDay(region = 'us'): Promise<BetOfTheDay
   // Only games that start within the next 24 hours and have at least 2 options
   // const in2hrs = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
+  const ALLOWED_SPORT_PREFIXES = [
+    'americanfootball',
+    'basketball',
+    'baseball',
+    'icehockey',
+    'soccer',
+  ];
+
   const eligible = markets.filter(m => {
     if (!m.startTime) return false;
     const start = new Date(m.startTime);
-    // Must start at least 2 hours from now so users have time to claim
-    return start > now && start <= in24hrs && m.options.length >= 2;
+    const sportAllowed = ALLOWED_SPORT_PREFIXES.some(prefix =>
+        (m.sport_key ?? '').startsWith(prefix)
+    );
+    return  start <= in24hrs && m.options.length >= 2 && sportAllowed;
   });
 
   if (eligible.length === 0) return null;

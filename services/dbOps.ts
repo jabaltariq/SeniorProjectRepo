@@ -352,6 +352,124 @@ export async function markBoostUsed(uid: string, boostType: BoostType): Promise<
 }
 
 // ─────────────────────────────────────────────────────────────────
+//  SPENDING LIMITS
+// ─────────────────────────────────────────────────────────────────
+
+export type SpendingLimits = {
+    daily:            number | null;  // null = no limit
+    weekly:           number | null;
+    dailySpent:       number;
+    weeklySpent:      number;
+    lastDailyReset:   Timestamp;
+    lastWeeklyReset:  Timestamp;
+};
+
+function getMidnightToday(): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+
+/**
+ * Gets a user's spending limits, auto-resetting spent counters as needed.
+ * Daily spent resets at midnight local time; weekly spent resets every Sunday midnight UTC.
+ * @param uid A user's Firebase Authentication ID.
+ */
+export async function getSpendingLimits(uid: string): Promise<SpendingLimits> {
+    const userRef = doc(db, "userInfo", uid);
+    const snap = await getDoc(userRef);
+
+    const todayMidnight  = getMidnightToday();
+    const lastSunday     = (() => {
+        const now = new Date();
+        const d = new Date(now);
+        d.setUTCDate(now.getUTCDate() - now.getUTCDay());
+        d.setUTCHours(0, 0, 0, 0);
+        return d;
+    })();
+
+    const defaults: SpendingLimits = {
+        daily:           null,
+        weekly:          null,
+        dailySpent:      0,
+        weeklySpent:     0,
+        lastDailyReset:  Timestamp.fromDate(todayMidnight),
+        lastWeeklyReset: Timestamp.fromDate(lastSunday),
+    };
+
+    if (!snap.exists()) return defaults;
+
+    const data = snap.data();
+    const raw  = data.spendingLimits;
+
+    if (!raw) {
+        await setDoc(userRef, { spendingLimits: defaults }, { merge: true });
+        return defaults;
+    }
+
+    let dailySpent      = raw.dailySpent      ?? 0;
+    let weeklySpent     = raw.weeklySpent     ?? 0;
+    let lastDailyReset  = raw.lastDailyReset  as Timestamp;
+    let lastWeeklyReset = raw.lastWeeklyReset as Timestamp;
+    let needsWrite      = false;
+
+    // Reset daily if last reset was before today's midnight
+    if (lastDailyReset.toDate() < todayMidnight) {
+        dailySpent     = 0;
+        lastDailyReset = Timestamp.fromDate(todayMidnight);
+        needsWrite     = true;
+    }
+
+    // Reset weekly if last reset was before this Sunday midnight
+    if (lastWeeklyReset.toDate() < lastSunday) {
+        weeklySpent     = 0;
+        lastWeeklyReset = Timestamp.fromDate(lastSunday);
+        needsWrite      = true;
+    }
+
+    if (needsWrite) {
+        await setDoc(userRef, {
+            spendingLimits: { ...raw, dailySpent, weeklySpent, lastDailyReset, lastWeeklyReset }
+        }, { merge: true });
+    }
+
+    return {
+        daily:           raw.daily           ?? null,
+        weekly:          raw.weekly          ?? null,
+        dailySpent,
+        weeklySpent,
+        lastDailyReset,
+        lastWeeklyReset,
+    };
+}
+
+/**
+ * Saves a user's daily and/or weekly spending limits.
+ * Pass null to remove a limit.
+ * @param uid    A user's Firebase Authentication ID.
+ * @param daily  Daily limit in dollars, or null to remove.
+ * @param weekly Weekly limit in dollars, or null to remove.
+ */
+export async function setSpendingLimits(
+    uid: string,
+    daily: number | null,
+    weekly: number | null,
+): Promise<void> {
+    const userRef = doc(db, "userInfo", uid);
+    const snap = await getDoc(userRef);
+    const existing = snap.exists() ? (snap.data().spendingLimits ?? {}) : {};
+
+    await setDoc(userRef, {
+        spendingLimits: {
+            ...existing,
+            daily,
+            weekly,
+        }
+    }, {merge: true});
+}
+
+
+// ─────────────────────────────────────────────────────────────────
 //  BETTING
 // ─────────────────────────────────────────────────────────────────
 
@@ -385,7 +503,7 @@ export async function addBet(uid: string, bet: Bet) {
 
 export type PlaceSingleBetResult =
     | { success: true; newBalance: number }
-    | { success: false; error: "USER_NOT_FOUND" | "INVALID_STAKE" | "INSUFFICIENT_FUNDS" | "BOOST_ALREADY_USED" | "UNKNOWN" };
+    | { success: false; error: "USER_NOT_FOUND" | "INVALID_STAKE" | "INSUFFICIENT_FUNDS" | "BOOST_ALREADY_USED" | "LIMIT_EXCEEDED" | "UNKNOWN" };
 
 /**
  * Places a single or parlay bet and debits funds atomically in Firestore.
@@ -414,6 +532,35 @@ export async function placeSingleBet(uid: string, bet: Bet, boost: BoostType | n
                 const boosts = userSnap.data().boosts;
                 const field = boost === 'double_payout' ? 'doublePayoutUsed' : 'moneyBackUsed';
                 if (boosts?.[field] === true) throw new Error("BOOST_ALREADY_USED");
+            }
+
+
+            // Check spending limits (free bets don't count)
+            if (!bet.isFree) {
+                const limits = userSnap.data().spendingLimits;
+                if (limits) {
+                    const todayMidnight = getMidnightToday();
+                    const lastSunday = (() => {
+                        const now = new Date();
+                        const d = new Date(now);
+                        d.setUTCDate(now.getUTCDate() - now.getUTCDay());
+                        d.setUTCHours(0, 0, 0, 0);
+                        return d;
+                    })();
+
+                    // Auto-reset daily spent if needed
+                    const dailySpent = (limits.lastDailyReset?.toDate() >= todayMidnight)
+                        ? (limits.dailySpent ?? 0)
+                        : 0;
+
+                    // Auto-reset weekly spent if needed
+                    const weeklySpent = (limits.lastWeeklyReset?.toDate() >= lastSunday)
+                        ? (limits.weeklySpent ?? 0)
+                        : 0;
+
+                    if (limits.daily  != null && dailySpent  + bet.stake > limits.daily)  throw new Error("LIMIT_EXCEEDED");
+                    if (limits.weekly != null && weeklySpent + bet.stake > limits.weekly) throw new Error("LIMIT_EXCEEDED");
+                }
             }
 
             const nextMoney = currentMoney - bet.stake;
@@ -448,18 +595,20 @@ export async function placeSingleBet(uid: string, bet: Bet, boost: BoostType | n
             });
 
             // Mark boost as used and deduct stake atomically
-            const userUpdate: Record<string, unknown> = { money: nextMoney };
-            if (boost) {
-                const field = boost === 'double_payout' ? 'boosts.doublePayoutUsed' : 'boosts.moneyBackUsed';
-                userUpdate[field] = true;
-            }
             transaction.update(userRef, { money: nextMoney });
             if (boost) {
                 const field = boost === 'double_payout' ? 'boosts.doublePayoutUsed' : 'boosts.moneyBackUsed';
                 transaction.update(userRef, { [field]: true });
             }
+            // Increment spending limit counters (free bets excluded)
+            if (!bet.isFree) {
+                transaction.update(userRef, {
+                    'spendingLimits.dailySpent':  increment(bet.stake),
+                    'spendingLimits.weeklySpent': increment(bet.stake),
+                });
+            }
             return nextMoney;
-        });
+        });  // ← closes runTransaction
 
         currBets.push(bet);
         return { success: true, newBalance };
@@ -468,9 +617,13 @@ export async function placeSingleBet(uid: string, bet: Bet, boost: BoostType | n
         if (message === "USER_NOT_FOUND")     return { success: false, error: "USER_NOT_FOUND" };
         if (message === "INSUFFICIENT_FUNDS") return { success: false, error: "INSUFFICIENT_FUNDS" };
         if (message === "BOOST_ALREADY_USED") return { success: false, error: "BOOST_ALREADY_USED" };
+        if (message === "LIMIT_EXCEEDED")     return { success: false, error: "LIMIT_EXCEEDED" };
         return { success: false, error: "UNKNOWN" };
     }
 }
+
+
+
 
 /**
  * Returns all bets associated with a user ID.

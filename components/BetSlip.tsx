@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bet, Market, MarketOption } from '../models';
-import { Trash2, X, Minus, TrendingUp, RefreshCcw } from 'lucide-react';
+import { Trash2, X, Minus, TrendingUp, RefreshCcw, AlertCircle } from 'lucide-react';
 import { BoostType } from '@/services/dbOps.ts';
 
 type SlipTab = 'SINGLES' | 'PARLAYS';
@@ -14,6 +14,7 @@ interface BetSlipProps {
   onSelectBet: (market: Market, option: MarketOption) => void;
   balance: number;
   activeBoost: BoostType | null;
+  limitError: string | null;
 }
 
 export const BetSlip: React.FC<BetSlipProps> = ({
@@ -25,6 +26,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                                                   onSelectBet,
                                                   balance,
                                                   activeBoost,
+                                                  limitError,
                                                 }) => {
   const [stakeInput, setStakeInput] = useState<string>('20');
   const [tab, setTab] = useState<SlipTab>('SINGLES');
@@ -135,8 +137,8 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   };
 
   const hasAnyPick = !isSinglesEmpty || !isParlayEmpty;
-  const singlesPlaceDisabled = isSinglesEmpty || !isAffordable || stake <= 0;
-  const parlayPlaceDisabled  = isParlayEmpty  || !isAffordable || stake <= 0;
+  const singlesPlaceDisabled = isSinglesEmpty || !isAffordable || stake <= 0 || !!limitError;
+  const parlayPlaceDisabled  = isParlayEmpty  || !isAffordable || stake <= 0 || !!limitError;
   const tabLabels: Record<SlipTab, string> = { SINGLES: 'Singles', PARLAYS: 'Parlays' };
 
   const cardClass = 'rounded-xl border border-slate-800 bg-[#100d1f]';
@@ -156,6 +158,14 @@ export const BetSlip: React.FC<BetSlipProps> = ({
         {activeBoost === 'money_back' && (
             <span className="ml-auto text-slate-400 normal-case font-normal">Stake refunded if you lose</span>
         )}
+      </div>
+  ) : null;
+
+  // Limit error banner
+  const LimitBanner = () => limitError ? (
+      <div className="mt-2 flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-red-400">
+        <AlertCircle size={11} />
+        {limitError}
       </div>
   ) : null;
 
@@ -242,6 +252,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                     </div>
                   </div>
                   <BoostBanner />
+                  <LimitBanner />
                   {!isAffordable && (
                       <p className="text-red-400 text-[10px] mt-2 font-semibold">Insufficient funds</p>
                   )}
@@ -381,6 +392,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                     </div>
                   </div>
                   <BoostBanner />
+                  <LimitBanner />
                   {!isAffordable && (
                       <p className="text-red-400 text-[10px] mt-2 font-semibold">Insufficient funds</p>
                   )}
