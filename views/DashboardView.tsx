@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Sparkles,
   Layers,
+  LayoutGrid,
   ChevronDown,
   ChevronUp,
   CircleDot,
@@ -111,6 +112,7 @@ interface DashboardViewProps {
   onLogout: () => void;
   onSetView: (view: string) => void;
   onSportFilter: (sport: string) => void;
+  onSelectLeagueInSport: (sport: string, league: string) => void;
   onLeagueFilter: (league: string) => void;
   onSearchChange: (query: string) => void;
   onRetryMarkets: () => void;
@@ -152,6 +154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onLogout,
     onSetView,
     onSportFilter,
+    onSelectLeagueInSport,
     onLeagueFilter,
     onSearchChange,
     onRetryMarkets,
@@ -424,23 +427,44 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                   </p>
 
                   <div className="grid grid-cols-4 gap-1.5 mb-3">
-                    {sportTabs.filter((tab) => tab !== 'ALL').slice(0, 8).map((tab) => (
+                    {sportTabs.filter((tab) => tab !== 'ALL').slice(0, 8).map((tab) => {
+                      const isSportContext = sportFilter === tab;
+                      const sportPrimarySelected = isSportContext && leagueFilter !== 'ALL';
+                      const sportMutedSelected = isSportContext && leagueFilter === 'ALL';
+                      return (
                         <button
                             key={`tile-${tab}`}
+                            type="button"
                             onClick={() => onSportFilter(tab)}
                             title={tab}
                             className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
-                                sportFilter === tab
+                                sportPrimarySelected
                                     ? 'border-blue-500 bg-blue-600/20 text-blue-200'
-                                    : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                                    : sportMutedSelected
+                                      ? 'border-slate-600 bg-slate-800/70 text-slate-300 ring-1 ring-slate-700/80'
+                                      : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                             }`}
                         >
                           {renderSportIcon(tab)}
                         </button>
-                    ))}
+                      );
+                    })}
+                    <button
+                        type="button"
+                        onClick={() => onSportFilter('ALL')}
+                        title="All sports & leagues"
+                        aria-pressed={sportFilter === 'ALL'}
+                        className={`market-top-pill rounded-lg border p-2 flex items-center justify-center transition-all ${
+                            sportFilter === 'ALL'
+                                ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                        }`}
+                    >
+                      <LayoutGrid size={20} strokeWidth={2} className="shrink-0" aria-hidden />
+                    </button>
                   </div>
 
-                  {leagueNavRows.length > 0 && (
+                  {hasSelectedSport && leagueNavRows.length > 0 && (
                       <div className="mb-4 space-y-0 divide-y divide-slate-800/90 rounded-lg border border-slate-800 overflow-hidden">
                         {leagueNavRows.map(({ league, sport }) => {
                           const icon = resolveLeagueIcon(league);
@@ -449,10 +473,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               <button
                                   type="button"
                                   key={`league-row-${sport}-${league}`}
-                                  onClick={() => {
-                                    if (sportFilter !== sport) onSportFilter(sport);
-                                    onLeagueFilter(league);
-                                  }}
+                                  onClick={() => onSelectLeagueInSport(sport, league)}
                                   className={`flex w-full items-center gap-2.5 px-2 py-2.5 text-left transition-colors ${
                                       selected ? 'bg-slate-800/70' : 'bg-slate-900/40 hover:bg-slate-800/40'
                                   }`}
@@ -522,7 +543,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         <button
                             key={`popular-${market.id}`}
                             type="button"
-                            onClick={() => onLeagueFilter(market.subtitle)}
+                            onClick={() => onSelectLeagueInSport(market.category, market.subtitle)}
                             className="w-full text-left px-2 py-1.5 rounded-md text-xs border border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700 hover:bg-slate-900 transition-all truncate inline-flex items-center gap-2"
                         >
                           <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950/80">

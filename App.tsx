@@ -75,6 +75,7 @@ const App: React.FC = () => {
         onLogout={dashboard.auth.logout}
         onSetView={dashboard.setView}
         onSportFilter={dashboard.markets.handleSportFilter}
+        onSelectLeagueInSport={dashboard.markets.selectLeagueInSport}
         onLeagueFilter={dashboard.markets.setLeagueFilter}
         onSearchChange={dashboard.markets.setSearchQuery}
         onRetryMarkets={dashboard.markets.loadMarkets}
