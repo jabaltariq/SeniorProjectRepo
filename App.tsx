@@ -61,10 +61,11 @@ const App: React.FC = () => {
         leagueFilter={dashboard.markets.leagueFilter}
         searchQuery={dashboard.markets.searchQuery}
         sportTabs={dashboard.markets.sportTabs}
-        availableLeagues={dashboard.markets.availableLeagues}
+        sportFilteredMarkets={dashboard.markets.sportFilteredMarkets}
         markets={dashboard.markets.markets}
         loading={dashboard.markets.loading}
         error={dashboard.markets.error}
+        searchCacheMarketCount={dashboard.markets.searchCacheMarketCount}
         leaderboardEntries={dashboard.leaderboardEntries}
         friends={dashboard.friends}
         activity={dashboard.activity}
@@ -75,6 +76,7 @@ const App: React.FC = () => {
         onLogout={dashboard.auth.logout}
         onSetView={dashboard.setView}
         onSportFilter={dashboard.markets.handleSportFilter}
+        onSelectLeagueInSport={dashboard.markets.selectLeagueInSport}
         onLeagueFilter={dashboard.markets.setLeagueFilter}
         onSearchChange={dashboard.markets.setSearchQuery}
         onRetryMarkets={dashboard.markets.loadMarkets}

@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   Settings,
+  Eye,
   Trophy,
   BarChart3,
   Wallet,
   Target,
   Clock3,
-  Check,
   Swords,
 } from 'lucide-react';
 import { CounterBetModal } from '../components/CounterBetModal';
@@ -89,6 +89,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [isEditingAchievements, setIsEditingAchievements] = useState(false);
   const [isEditingBets, setIsEditingBets] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [publicPreview, setPublicPreview] = useState(false);
 
   // Counter-Bet (head-to-head) modal target.
   const [counterBetTarget, setCounterBetTarget] = useState<Bet | null>(null);
@@ -308,140 +309,189 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const displayedBets = recentBets.filter((bet) => profileDisplay.bets.includes(bet.id));
   const betsForSection = isOwnProfile && isEditingBets ? recentBets : displayedBets;
 
+  const viewingAsPublic = Boolean(isOwnProfile && publicPreview);
+  const showEditUi = isOwnProfile && !viewingAsPublic;
+  const statsForDisplay = !isOwnProfile || viewingAsPublic ? displayedStats : statsForSection;
+  const achievementsForDisplay = !isOwnProfile || viewingAsPublic ? displayedAchievements : achievementsForSection;
+  const betsForDisplay = !isOwnProfile || viewingAsPublic ? displayedBets : betsForSection;
+
+  const sectionShell =
+    'rounded-2xl border border-slate-800/50 bg-slate-950/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.03)]';
+  const sectionLabel = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500';
+
   return (
-    <div className="animate-in fade-in duration-500 w-full">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-6 flex-1 min-w-0">
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="w-20 h-20 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center shrink-0 overflow-hidden">
-              {equippedAvatarUrl ? (
-                <img
-                  src={equippedAvatarUrl}
-                  alt={`${displayName}'s avatar`}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  onError={() => setEquippedAvatarUrl(null)}
-                />
-              ) : (
-                <span className="text-2xl font-bold text-blue-400">{avatarText}</span>
-              )}
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-2xl font-bold text-white">{isOwnProfile ? 'Account' : `${displayName}'s account`}</h2>
-              <p className="text-slate-400 text-sm break-all">{isOwnProfile ? userEmail : `${displayName} on BetHub`}</p>
-            </div>
-          </div>
-          <div className="flex-1 min-w-0 lg:max-w-md">
-            <div className="glass-card rounded-2xl p-4 border-slate-800">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                {isOwnProfile ? 'Public account display' : 'Visible on this account'}
-              </p>
-              <p className="text-sm text-slate-400">
-                {isOwnProfile
-                  ? 'Choose which sections other BetHub users can see when they open your account page.'
-                  : `${displayName} controls which account sections are public.`}
-              </p>
-            </div>
-          </div>
+    <div className="animate-in fade-in duration-500 mx-auto w-full max-w-5xl">
+      {loading ? (
+        <div
+          className={`${sectionShell} py-16 text-center text-sm text-slate-500`}
+        >
+          Loading account...
         </div>
-        {isOwnProfile && (
-          <button
-            onClick={() => setShowSettings((prev) => !prev)}
-            className="p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 transition-all self-start shrink-0"
-            title="Account settings"
-          >
-            <Settings className="text-slate-400 hover:text-slate-200" size={24} />
-          </button>
-        )}
-      </div>
-
-      {isOwnProfile && showSettings && (
-        <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/35 p-5">
-          <SettingsView
-            userEmail={userEmail}
-            embedded
-            themeMode={themeMode}
-            themeSaving={themeSaving}
-            onThemeModeChange={onThemeModeChange}
-          />
-        </div>
-      )}
-
-      <div className="space-y-6">
-        <div className="space-y-6">
-          {loading ? (
-            <div className="glass-card rounded-2xl p-10 border-slate-800 text-center text-slate-400">
-              Loading account...
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {(statsForSection.length > 0 || isOwnProfile) && (
-                <section className="glass-card rounded-2xl p-6 border-slate-800">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-bold flex items-center gap-2 text-blue-400">
-                      <BarChart3 size={20} /> Stats
-                    </h3>
+      ) : (
+        <div className="space-y-8">
+          <section className={`${sectionShell} overflow-hidden`}>
+            {viewingAsPublic && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-xs text-amber-100 sm:px-5">
+                <span className="font-medium">You&apos;re viewing your public profile.</span>
+                <button
+                  type="button"
+                  onClick={() => setPublicPreview(false)}
+                  className="rounded-md border border-amber-400/35 bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/25"
+                >
+                  Exit preview
+                </button>
+              </div>
+            )}
+            <div className={`px-5 pb-6 sm:px-8 sm:pb-8 ${viewingAsPublic ? 'pt-6 sm:pt-8' : 'pt-8 sm:pt-10'}`}>
+              <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
+                <div className="flex min-w-0 flex-1 gap-4 sm:gap-5">
+                  <div className="relative shrink-0">
+                    <div className="h-24 w-24 rounded-full bg-gradient-to-br from-blue-500/25 via-slate-700 to-slate-800 p-[3px] shadow-lg shadow-black/25 ring-1 ring-white/[0.06] sm:h-28 sm:w-28">
+                      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-900">
+                        {equippedAvatarUrl ? (
+                          <img
+                            src={equippedAvatarUrl}
+                            alt={`${displayName}'s avatar`}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={() => setEquippedAvatarUrl(null)}
+                          />
+                        ) : (
+                          <span className="text-2xl font-semibold tracking-tight text-blue-300 sm:text-3xl">
+                            {avatarText}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1 text-left">
+                    <h2 className="text-xl font-semibold tracking-tight text-slate-100 sm:text-2xl">
+                      {isOwnProfile ? 'Account' : `${displayName}'s account`}
+                    </h2>
+                    <p className="mt-1 break-words text-sm leading-relaxed text-slate-500">
+                      {isOwnProfile ? userEmail : `${displayName} on BetHub`}
+                    </p>
                     {isOwnProfile && (
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingStats((prev) => !prev)}
-                        className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
-                      >
-                        {isEditingStats ? 'View' : 'Edit'}
-                      </button>
+                      <p className="mt-3 text-[10px] font-bold tracking-[0.22em] text-slate-500">PUBLIC</p>
+                    )}
+                    {showEditUi && !publicPreview && (
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPublicPreview(true);
+                            setIsEditingStats(false);
+                            setIsEditingAchievements(false);
+                            setIsEditingBets(false);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:border-blue-500/40 hover:bg-slate-800"
+                        >
+                          <Eye size={14} strokeWidth={2} aria-hidden />
+                          Preview public profile
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowSettings((prev) => !prev)}
+                          className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                            showSettings
+                              ? 'border-blue-500/50 bg-blue-500/15 text-blue-200'
+                              : 'border-slate-600 bg-slate-800/50 text-slate-400 hover:border-slate-500 hover:bg-slate-800 hover:text-slate-200'
+                          }`}
+                          title="Advanced settings"
+                          aria-expanded={showSettings}
+                        >
+                          Settings
+                          <Settings size={16} strokeWidth={2} aria-hidden />
+                        </button>
+                      </div>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {statsForSection.map((card) => {
-                      const isSelected = profileDisplay.stats.includes(card.id);
-                      const isClickable = isOwnProfile && isEditingStats;
-                      return (
-                      <button
-                        type="button"
-                        key={card.id}
-                        onClick={isClickable ? () => toggleStat(card.id) : undefined}
-                        disabled={!isClickable}
-                        className={`p-4 rounded-xl border text-left transition-colors ${
-                          isSelected
-                            ? 'border-blue-500/60 bg-blue-500/10'
-                            : 'border-slate-700 bg-slate-800/50'
-                        } ${isClickable ? 'cursor-pointer hover:border-blue-400/70' : 'cursor-default'}`}
-                      >
-                        <p className="text-xs font-bold text-slate-500 uppercase mb-1">{card.label}</p>
-                        <p className={`text-xl font-bold ${card.tone}`}>{card.value}</p>
-                      </button>
-                    );
-                    })}
-                  </div>
-                  {isOwnProfile && !isEditingStats && statsForSection.length === 0 && (
-                    <p className="mt-4 text-sm text-slate-500">
-                      No stats are public yet. Switch to Edit to choose what others can see.
-                    </p>
-                  )}
-                </section>
-              )}
+                </div>
 
-              {(achievementsForSection.length > 0 || (isOwnProfile && unlockedAchievementCards.length > 0)) && (
-                <section className="glass-card rounded-2xl p-6 border-slate-800">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-bold flex items-center gap-2 text-blue-400">
-                      <Trophy size={20} /> Achievements
+                {(statsForDisplay.length > 0 || isOwnProfile) && (
+                  <div className="min-w-0 flex-1 lg:border-l lg:border-slate-800/50 lg:pl-10">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <h3 className={`${sectionLabel} flex items-center gap-2`}>
+                        <BarChart3 size={14} className="text-blue-400/90" aria-hidden />
+                        Stats
+                      </h3>
+                      {showEditUi && (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingStats((prev) => !prev)}
+                          className="rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white"
+                        >
+                          {isEditingStats ? 'View' : 'Edit'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
+                      {statsForDisplay.map((card) => {
+                        const isSelected = profileDisplay.stats.includes(card.id);
+                        const isClickable = showEditUi && isEditingStats;
+                        return (
+                          <button
+                            type="button"
+                            key={card.id}
+                            onClick={isClickable ? () => toggleStat(card.id) : undefined}
+                            disabled={!isClickable}
+                            className={`rounded-xl border px-3 py-3.5 text-left transition-colors sm:px-4 sm:py-4 ${
+                              isSelected
+                                ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/20'
+                                : 'border-slate-800/80 bg-slate-900/40'
+                            } ${isClickable ? 'cursor-pointer hover:border-blue-400/60 hover:bg-slate-800/30' : 'cursor-default'}`}
+                          >
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{card.label}</p>
+                            <p className={`mt-1 text-lg font-semibold tabular-nums sm:text-xl ${card.tone}`}>{card.value}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {showEditUi && !isEditingStats && statsForDisplay.length === 0 && (
+                      <p className="mt-4 text-sm text-slate-500">
+                        No stats are public yet. Switch to Edit to choose what others can see.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {showEditUi && showSettings && (
+            <div className={`${sectionShell} p-5 sm:p-6`}>
+              <SettingsView
+                userEmail={userEmail}
+                embedded
+                themeMode={themeMode}
+                themeSaving={themeSaving}
+                onThemeModeChange={onThemeModeChange}
+              />
+            </div>
+          )}
+
+              {(achievementsForDisplay.length > 0 || (showEditUi && unlockedAchievementCards.length > 0)) && (
+                <section className={`${sectionShell} p-6 sm:p-8`}>
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <h3 className={`${sectionLabel} flex items-center gap-2 text-slate-400`}>
+                      <Trophy size={14} className="text-amber-400/90" aria-hidden />
+                      Achievements
                     </h3>
-                    {isOwnProfile && unlockedAchievementCards.length > 0 && (
+                    {showEditUi && unlockedAchievementCards.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setIsEditingAchievements((prev) => !prev)}
-                        className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                        className="rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white"
                       >
                         {isEditingAchievements ? 'View' : 'Edit'}
                       </button>
                     )}
                   </div>
                   <div className="grid gap-4 md:grid-cols-3">
-                    {achievementsForSection.map((achievement) => {
+                    {achievementsForDisplay.map((achievement) => {
                       const isSelected = profileDisplay.achievements.includes(achievement.id);
-                      const isClickable = isOwnProfile && isEditingAchievements;
+                      const isClickable = showEditUi && isEditingAchievements;
                       return (
                       <button
                         key={achievement.id}
@@ -449,10 +499,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         onClick={isClickable ? () => toggleAchievement(achievement.id) : undefined}
                         className={`rounded-xl border p-4 text-left transition-colors ${
                           isSelected
-                            ? 'border-amber-400/40 bg-amber-500/10'
-                            : 'border-slate-700 bg-slate-800/40'
+                            ? 'border-amber-400/45 bg-amber-500/10 ring-1 ring-amber-400/15'
+                            : 'border-slate-800/80 bg-slate-900/35'
                         } ${
-                          isClickable ? 'cursor-pointer hover:border-amber-300/50' : 'cursor-default'
+                          isClickable ? 'cursor-pointer hover:border-amber-400/40 hover:bg-slate-800/30' : 'cursor-default'
                         }`}
                         disabled={!isClickable}
                       >
@@ -472,12 +522,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     );
                     })}
                   </div>
-                  {isOwnProfile && !isEditingAchievements && achievementsForSection.length === 0 && (
+                  {showEditUi && !isEditingAchievements && achievementsForDisplay.length === 0 && (
                     <p className="mt-4 text-sm text-slate-500">
                       No achievements are public yet. Switch to Edit to choose what others can see.
                     </p>
                   )}
-                  {isOwnProfile && isEditingAchievements && unlockedAchievementCards.length === 0 && (
+                  {showEditUi && isEditingAchievements && unlockedAchievementCards.length === 0 && (
                     <p className="mt-4 text-sm text-slate-500">
                       Unlock achievements to choose which ones appear publicly.
                     </p>
@@ -485,36 +535,37 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </section>
               )}
 
-              {(betsForSection.length > 0 || isOwnProfile) && (
-                <section className="glass-card rounded-2xl p-6 border-slate-800">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-bold flex items-center gap-2 text-blue-400">
-                      <Target size={20} /> Featured Bets
+              {(betsForDisplay.length > 0 || isOwnProfile) && (
+                <section className={`${sectionShell} p-6 sm:p-8`}>
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <h3 className={`${sectionLabel} flex items-center gap-2 text-slate-400`}>
+                      <Target size={14} className="text-violet-400/90" aria-hidden />
+                      Featured Bets
                     </h3>
-                    {isOwnProfile && (
+                    {showEditUi && (
                       <button
                         type="button"
                         onClick={() => setIsEditingBets((prev) => !prev)}
-                        className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                        className="rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white"
                       >
                         {isEditingBets ? 'View' : 'Edit'}
                       </button>
                     )}
                   </div>
-                  {betsForSection.length > 0 ? (
+                  {betsForDisplay.length > 0 ? (
                     <div className="space-y-3">
-                      {betsForSection.map((bet) => {
+                      {betsForDisplay.map((bet) => {
                         const isSelected = profileDisplay.bets.includes(bet.id);
-                        const isClickable = isOwnProfile && isEditingBets;
+                        const isClickable = showEditUi && isEditingBets;
                         const fade = fadeEligibility(bet);
                         const challengerStake = Math.round(bet.stake * (bet.odds - 1) * 100) / 100;
                         return (
                         <div
                           key={bet.id}
-                          className={`rounded-xl border ${
+                          className={`overflow-hidden rounded-xl border ${
                             isSelected
-                              ? 'border-blue-500/60 bg-blue-500/10'
-                              : 'border-slate-700 bg-slate-900/60'
+                              ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/15'
+                              : 'border-slate-800/80 bg-slate-900/40'
                           }`}
                         >
                         <button
@@ -534,7 +585,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                               <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300">
                                 {(bet.status ?? 'PENDING').toLowerCase()}
                               </span>
-                              {isClickable && isSelected && <Check size={16} className="text-blue-300" />}
+                              {isClickable && isSelected && (
+                                <Eye size={16} className="text-blue-300" aria-label="Shown on public profile" />
+                              )}
                             </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-400">
@@ -572,28 +625,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       })}
                     </div>
                   ) : (
-                    <div className="py-8 text-center border border-dashed border-slate-700 rounded-xl">
-                      <Target className="mx-auto text-slate-600 mb-3" size={48} />
-                      <p className="text-slate-500 font-medium">No featured bets to show yet</p>
-                      <p className="text-sm text-slate-600 mt-1">
-                        {isOwnProfile && isEditingBets
+                    <div className="rounded-xl border border-dashed border-slate-800/70 bg-slate-900/25 py-10 text-center">
+                      <Target className="mx-auto mb-3 text-slate-600" size={40} strokeWidth={1.5} />
+                      <p className="font-medium text-slate-500">No featured bets to show yet</p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {showEditUi && isEditingBets
                           ? 'Place a few bets to choose which ones appear here.'
                           : 'Once bets are placed, they can appear here on the account page.'}
                       </p>
                     </div>
                   )}
-                  {isOwnProfile && !isEditingBets && betsForSection.length === 0 && recentBets.length > 0 && (
+                  {showEditUi && !isEditingBets && betsForDisplay.length === 0 && recentBets.length > 0 && (
                     <p className="mt-4 text-sm text-slate-500">
                       No featured bets are public yet. Switch to Edit to choose which bets to show.
                     </p>
                   )}
                 </section>
               )}
-            </div>
-          )}
         </div>
-
-      </div>
+      )}
       {counterBetTarget && currentUserId && (
         <CounterBetModal
           bet={counterBetTarget}

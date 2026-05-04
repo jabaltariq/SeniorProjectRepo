@@ -3,11 +3,10 @@ import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
   Wallet as WalletIcon,
-  Zap,
+  Home,
   BarChart3,
   History,
   Gamepad2,
-  TrendingUp,
   Search,
   Users,
   Medal,
@@ -19,10 +18,10 @@ import {
   Flame,
   Clock3,
   ChevronRight,
-  Compass,
-  Sparkles,
+  Ticket,
+  Layers,
+  LayoutGrid,
   CircleDot,
-  User,
 } from 'lucide-react';
 import type { Market, MarketOption, Bet } from '../models';
 import { BetSlip } from '../components/BetSlip';
@@ -39,7 +38,7 @@ import { StoreView } from './StoreView';
 import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
-import { DAILY_BONUS_AMOUNT } from '../models/constants';
+import { DAILY_BONUS_AMOUNT, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
@@ -94,10 +93,13 @@ interface DashboardViewProps {
   leagueFilter: string;
   searchQuery: string;
   sportTabs: readonly string[];
-  availableLeagues: string[];
+  /** Markets for current sport + search only (ignores league chip filter), for sidebar league grouping. */
+  sportFilteredMarkets: Market[];
   markets: Market[];
   loading: boolean;
   error: string | null;
+  /** Unique games merged into the in-memory search index (from tab loads only). */
+  searchCacheMarketCount: number;
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
@@ -108,6 +110,7 @@ interface DashboardViewProps {
   onLogout: () => void;
   onSetView: (view: string) => void;
   onSportFilter: (sport: string) => void;
+  onSelectLeagueInSport: (sport: string, league: string) => void;
   onLeagueFilter: (league: string) => void;
   onSearchChange: (query: string) => void;
   onRetryMarkets: () => void;
@@ -135,10 +138,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     leagueFilter,
     searchQuery,
     sportTabs,
-    availableLeagues,
+    sportFilteredMarkets,
     markets,
     loading,
     error,
+    searchCacheMarketCount,
     leaderboardEntries,
     friends,
     activity,
@@ -149,6 +153,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onLogout,
     onSetView,
     onSportFilter,
+    onSelectLeagueInSport,
     onLeagueFilter,
     onSearchChange,
     onRetryMarkets,
@@ -162,7 +167,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const navigate = useNavigate();
   const view = pathToView(location.pathname);
   const isLightMode = themeMode === 'light';
-  const [marketLayoutMode, setMarketLayoutMode] = useState<'DISCOVER' | 'ALL_LEAGUES'>('DISCOVER');
+  const [promotionsOpen, setPromotionsOpen] = useState(false);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -196,9 +201,33 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     const date = new Date(market.startTime);
     const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     if (market.status === 'LIVE') {
-      return { label: `Live • Started ${time}`, tone: 'live' as const };
+      return { label: `Started ${time}`, tone: 'live' as const };
     }
     return { label: time, tone: 'upcoming' as const };
+  };
+
+  /** Small league tiles in the sidebar; falls back to initials when unknown. */
+  const resolveLeagueIcon = (league: string): { src: string; invert?: boolean } | null => {
+    const l = league.toLowerCase();
+    if (l.includes('mlb')) return { src: 'https://cdn.jsdelivr.net/npm/simple-icons@11.14.0/icons/mlb.svg', invert: true };
+    if (l.includes('nfl')) return { src: 'https://upload.wikimedia.org/wikipedia/en/a/a2/National_Football_League_logo.svg' };
+    if (l.includes('nba')) return { src: 'https://upload.wikimedia.org/wikipedia/en/0/03/National_Basketball_Association_logo.svg' };
+    if (l.includes('nhl')) return { src: 'https://cdn.jsdelivr.net/npm/simple-icons@11.14.0/icons/nhl.svg', invert: true };
+    if (l.includes('ncaa')) return { src: 'https://upload.wikimedia.org/wikipedia/commons/d/dd/NCAA_logo.svg' };
+    if (l.includes('brazil') || l.includes('brasileir') || l.includes('série b'))
+      return { src: 'https://upload.wikimedia.org/wikipedia/en/0/05/Flag_of_Brazil.svg' };
+    if (l.includes('argentina') || l.includes('primera'))
+      return { src: 'https://upload.wikimedia.org/wikipedia/commons/8/8d/Association_football_ball_01.svg' };
+    if (l.includes('premier league') || l.includes('epl'))
+      return { src: 'https://upload.wikimedia.org/wikipedia/en/f/f2/Premier_League_Logo.svg' };
+    if (l.includes('la liga') || l.includes('laliga'))
+      return { src: 'https://upload.wikimedia.org/wikipedia/commons/0/0f/LaLiga_logo_2023.svg' };
+    if (l.includes('bundesliga')) return { src: 'https://upload.wikimedia.org/wikipedia/en/d/df/Bundesliga_logo_%282017%29.svg' };
+    if (l.includes('serie a') && l.includes('ital')) return { src: 'https://upload.wikimedia.org/wikipedia/en/e/e1/Serie_A_logo_2022.svg' };
+    if (l.includes('mls')) return { src: 'https://upload.wikimedia.org/wikipedia/commons/7/76/MLS_crest_logo_RGB_gradient.svg' };
+    if (l.includes('uefa') || l.includes('champions') || l.includes('europa') || l.includes('world cup'))
+      return { src: 'https://upload.wikimedia.org/wikipedia/commons/8/8d/Association_football_ball_01.svg' };
+    return null;
   };
 
   const leagueBadge = (label: string) => {
@@ -261,11 +290,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     );
   };
 
-  const leaguesBySport: Record<string, string[]> = markets.reduce((acc, market) => {
-    if (!acc[market.category]) acc[market.category] = [];
-    if (!acc[market.category].includes(market.subtitle)) acc[market.category].push(market.subtitle);
-    return acc;
-  }, {} as Record<string, string[]>);
+  /** One row per league (with sport for subtitle + filtering). */
+  const leagueNavRows: Array<{ league: string; sport: string }> = (() => {
+    const seen = new Map<string, { league: string; sport: string }>();
+    for (const m of sportFilteredMarkets) {
+      const key = `${m.category}||${m.subtitle}`;
+      if (!seen.has(key)) seen.set(key, { league: m.subtitle, sport: m.category });
+    }
+    return Array.from(seen.values()).sort((a, b) => a.league.localeCompare(b.league));
+  })();
 
   const safeBalance = Number.isFinite(balance) ? balance : 0;
   const displayBalance = `$${Math.max(0, safeBalance).toFixed(2)}`;
@@ -387,152 +420,124 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <>
               <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)] gap-5">
                 <aside className="glass-card rounded-xl p-3 border border-slate-800/80 h-fit xl:sticky xl:top-6">
-                  <div className="grid grid-cols-2 gap-1 mb-3 rounded-lg border border-slate-800 bg-slate-900 p-1">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3 inline-flex items-center gap-1.5">
+                    <Layers size={11} className="text-slate-500" aria-hidden />
+                    Leagues
+                  </p>
+
+                  <div className="grid grid-cols-4 gap-1.5 mb-3">
+                    {sportTabs.filter((tab) => tab !== 'ALL').slice(0, 8).map((tab) => {
+                      const isSportContext = sportFilter === tab;
+                      const sportPrimarySelected = isSportContext && leagueFilter !== 'ALL';
+                      const sportMutedSelected = isSportContext && leagueFilter === 'ALL';
+                      return (
+                        <button
+                            key={`tile-${tab}`}
+                            type="button"
+                            onClick={() => onSportFilter(tab)}
+                            title={tab}
+                            className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
+                                sportPrimarySelected
+                                    ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                    : sportMutedSelected
+                                      ? 'border-slate-600 bg-slate-800/70 text-slate-300 ring-1 ring-slate-700/80'
+                                      : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                            }`}
+                        >
+                          {renderSportIcon(tab)}
+                        </button>
+                      );
+                    })}
                     <button
-                        onClick={() => setMarketLayoutMode('DISCOVER')}
-                        className={`market-top-pill inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
-                            marketLayoutMode === 'DISCOVER' ? 'bg-slate-700 text-blue-300' : 'text-slate-500 hover:text-slate-300'
+                        type="button"
+                        onClick={() => onSportFilter('ALL')}
+                        title="All sports & leagues"
+                        aria-pressed={sportFilter === 'ALL'}
+                        className={`market-top-pill rounded-lg border p-2 flex items-center justify-center transition-all ${
+                            sportFilter === 'ALL'
+                                ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                         }`}
                     >
-                      <Compass size={11} />
-                      Discover
-                    </button>
-                    <button
-                        onClick={() => {
-                          setMarketLayoutMode('ALL_LEAGUES');
-                          onSportFilter('ALL');
-                          onLeagueFilter('ALL');
-                        }}
-                        className={`market-top-pill rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
-                            marketLayoutMode === 'ALL_LEAGUES' ? 'bg-slate-700 text-blue-300' : 'text-slate-500 hover:text-slate-300'
-                        }`}
-                    >
-                      All Leagues
+                      <LayoutGrid size={20} strokeWidth={2} className="shrink-0" aria-hidden />
                     </button>
                   </div>
 
-                  {marketLayoutMode === 'DISCOVER' ? (
-                      <>
-                        <div className="grid grid-cols-4 gap-1.5 mb-4">
-                          {sportTabs.filter((tab) => tab !== 'ALL').slice(0, 8).map((tab) => (
+                  {hasSelectedSport && leagueNavRows.length > 0 && (
+                      <div className="mb-4 space-y-0 divide-y divide-slate-800/90 rounded-lg border border-slate-800 overflow-hidden">
+                        {leagueNavRows.map(({ league, sport }) => {
+                          const icon = resolveLeagueIcon(league);
+                          const selected = leagueFilter === league && sportFilter === sport;
+                          return (
                               <button
-                                  key={`tile-${tab}`}
-                                  onClick={() => onSportFilter(tab)}
-                                  title={tab}
-                                  className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
-                                      sportFilter === tab
-                                          ? 'border-blue-500 bg-blue-600/20 text-blue-200'
-                                          : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                                  type="button"
+                                  key={`league-row-${sport}-${league}`}
+                                  onClick={() => onSelectLeagueInSport(sport, league)}
+                                  className={`flex w-full items-center gap-2.5 px-2 py-2.5 text-left transition-colors ${
+                                      selected ? 'bg-slate-800/70' : 'bg-slate-900/40 hover:bg-slate-800/40'
                                   }`}
                               >
-                                {renderSportIcon(tab)}
+                                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950/80">
+                                  {icon ? (
+                                      <img
+                                          src={icon.src}
+                                          alt=""
+                                          className={`h-5 w-5 object-contain ${icon.invert ? 'brightness-0 invert opacity-90' : ''}`}
+                                          loading="lazy"
+                                          referrerPolicy="no-referrer"
+                                      />
+                                  ) : (
+                                      <span className="text-[9px] font-black uppercase tracking-tight text-slate-300">
+                                        {leagueBadge(league)}
+                                      </span>
+                                  )}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-semibold text-slate-100">{league}</span>
+                                  <span className="block truncate text-[11px] text-slate-500">{sport}</span>
+                                </span>
                               </button>
-                          ))}
-                        </div>
-
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Popular</p>
-                        <div className="space-y-1.5 mb-4">
-                          <button className="w-full text-left px-2 py-1.5 rounded-md text-xs border border-slate-800 bg-slate-900/70 text-amber-300/90 hover:text-amber-200 transition-all inline-flex items-center gap-2">
-                            <Sparkles size={12} />
-                            Boosts
-                          </button>
-                          {/* Weekly Boosts card — sits under the Boosts button */}
-                          {uid && (
-                              <BoostsCard
-                                  uid={uid}
-                                  activeBoost={activeBoost}
-                                  onSelectBoost={setActiveBoost}
-                              />
-                          )}
-
-                          {/* ── Promotions button — expands BetOfTheDayCard below ── */}
-                          <div className="space-y-1">
-                            <button className="w-full text-left px-2 py-1.5 rounded-md text-xs border border-slate-800 bg-slate-900/70 text-cyan-300/90 hover:text-cyan-200 transition-all inline-flex items-center gap-2">
-                              <Flame size={12} />
-                              Promotions
-                            </button>
-                            {/* Free Bet of the Day card lives here, under Promotions */}
-                            {uid && <BetOfTheDayCard uid={uid} />}
-                          </div>
-
-                          {markets.slice(0, 5).map((market) => (
-                              <button
-                                  key={`popular-${market.id}`}
-                                  onClick={() => onLeagueFilter(market.subtitle)}
-                                  className="w-full text-left px-2 py-1.5 rounded-md text-xs border border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700 hover:bg-slate-900 transition-all truncate inline-flex items-center gap-2"
-                              >
-                                <CircleDot size={11} className="shrink-0" />
-                                <span className="truncate">{market.title.replace(' @ ', ' vs ')}</span>
-                              </button>
-                          ))}
-                        </div>
-                      </>
-                  ) : (
-                      <div className="space-y-4 mb-4">
-                        {Object.entries(leaguesBySport)
-                            .sort(([a], [b]) => a.localeCompare(b))
-                            .slice(0, 6)
-                            .map(([sport, leagues]) => (
-                                <div key={`sport-group-${sport}`} className="border-b border-slate-800 pb-3 last:border-b-0">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <button
-                                        onClick={() => onSportFilter(sport)}
-                                        className="inline-flex items-center gap-2 text-sm font-semibold text-slate-200 hover:text-blue-300 transition-colors"
-                                    >
-                              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-700">
-                                {renderSportIcon(sport, 'h-3.5 w-3.5')}
-                              </span>
-                                      {sport}
-                                    </button>
-                                    <button
-                                        onClick={() => onSportFilter(sport)}
-                                        className="text-[11px] text-violet-300 hover:text-violet-200 font-bold"
-                                    >
-                                      View all {leagues.length}
-                                    </button>
-                                  </div>
-                                  <div className="space-y-1">
-                                    {leagues.slice(0, 3).map((league) => (
-                                        <button
-                                            key={`group-league-${sport}-${league}`}
-                                            onClick={() => {
-                                              onSportFilter(sport);
-                                              onLeagueFilter(league);
-                                            }}
-                                            className="block w-full text-left text-xs text-slate-400 hover:text-slate-200 transition-colors"
-                                        >
-                                          {league}
-                                        </button>
-                                    ))}
-                                  </div>
-                                </div>
-                            ))}
+                          );
+                        })}
                       </div>
                   )}
 
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Leagues</p>
-                  <div className="space-y-1.5 max-h-[34vh] overflow-y-auto custom-scrollbar pr-1">
-                    <button
-                        onClick={() => onLeagueFilter('ALL')}
-                        className={`w-full text-left px-2.5 py-2 rounded-md text-xs font-bold transition-all ${
-                            leagueFilter === 'ALL'
-                                ? 'bg-slate-700 text-blue-300 border border-slate-600'
-                                : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
-                        }`}
-                    >
-                      All Leagues
-                    </button>
-                    {availableLeagues.map((league) => (
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Popular</p>
+                  <div className="space-y-1.5 mb-4">
+                    {uid && (
+                        <BoostsCard uid={uid} activeBoost={activeBoost} onSelectBoost={setActiveBoost} />
+                    )}
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+                      <button
+                          type="button"
+                          onClick={() => setPromotionsOpen((o) => !o)}
+                          className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-800/60 transition-colors"
+                      >
+                        <span className="inline-flex items-center gap-2 text-xs font-bold text-cyan-300/90">
+                          <Flame size={13} className="text-cyan-400" />
+                          Promotions
+                        </span>
+                        <Ticket size={14} className="text-slate-500 shrink-0" aria-hidden />
+                      </button>
+                      {promotionsOpen && (
+                          <div className="px-3 pb-3 border-t border-slate-800">
+                            <div className="pt-3">{uid && <BetOfTheDayCard uid={uid} />}</div>
+                          </div>
+                      )}
+                    </div>
+
+                    {markets.slice(0, 5).map((market) => (
                         <button
-                            key={league}
-                            onClick={() => onLeagueFilter(league)}
-                            className={`w-full text-left px-2.5 py-2 rounded-md text-xs font-bold transition-all ${
-                                leagueFilter === league
-                                    ? 'bg-slate-700 text-blue-300 border border-slate-600'
-                                    : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
-                            }`}
+                            key={`popular-${market.id}`}
+                            type="button"
+                            onClick={() => onSelectLeagueInSport(market.category, market.subtitle)}
+                            className="w-full text-left px-2 py-1.5 rounded-md text-xs border border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700 hover:bg-slate-900 transition-all truncate inline-flex items-center gap-2"
                         >
-                          {league}
+                          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950/80">
+                            {renderSportIcon(market.category, 'h-3.5 w-3.5')}
+                          </span>
+                          <span className="truncate">{market.title.replace(' @ ', ' vs ')}</span>
                         </button>
                     ))}
                   </div>
@@ -544,7 +549,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                       <input
                           type="text"
-                          placeholder={hasSelectedSport ? 'Search games...' : 'Select a sport tab to load markets'}
+                          placeholder={hasSelectedSport ? 'Search loaded games…' : 'Select a sport tab to load markets'}
                           value={searchQuery}
                           onChange={(e) => onSearchChange(e.target.value)}
                           disabled={!hasSelectedSport}
@@ -580,9 +585,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                   </button>
                               ))}
                         </div>
-                        <button className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-blue-300 transition-colors">
-                          View All Games <ChevronRight size={14} />
-                        </button>
+                        {markets.length >= VIEW_ALL_GAMES_VISIBLE_THRESHOLD && (
+                          <button
+                            type="button"
+                            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-blue-300 transition-colors"
+                          >
+                            View All Games <ChevronRight size={14} />
+                          </button>
+                        )}
                       </section>
                   )}
 
@@ -700,7 +710,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               <BarChart3 className="mx-auto text-slate-700 mb-4" size={48} />
                               <h3 className="text-xl font-bold text-slate-500">No matches found</h3>
                               <p className="text-slate-600">
-                                {sportFilter === 'ALL' ? 'Try a different search term.' : leagueFilter !== 'ALL' ? `No ${leagueFilter} games at the moment. Try another league or sport.` : `No ${sportFilter} games at the moment. Try another sport.`}
+                                {searchQuery.trim()
+                                  ? searchCacheMarketCount === 0
+                                    ? 'Open a few sport tabs first so games load into search—search uses no extra API calls.'
+                                    : 'No match in loaded games. Try another word or open another sport tab to add more lines.'
+                                  : leagueFilter !== 'ALL'
+                                    ? `No ${leagueFilter} games at the moment. Try another league or sport.`
+                                    : sportFilter === 'ALL'
+                                      ? 'No upcoming games in this window. Try again later.'
+                                      : `No ${sportFilter} games at the moment. Try another sport.`}
                               </p>
                             </div>
                         )}
@@ -727,11 +745,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               title="Home"
               className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/40 cursor-pointer [&.active]:ring-2 [&.active]:ring-blue-400 [&.active]:ring-offset-2 [&.active]:ring-offset-slate-900"
           >
-            <Zap className="text-white" size={24} />
+            <Home className="text-white" size={24} />
           </NavLink>
           <div className="flex lg:flex-col gap-4">
             <NavLink to="/bet" title="Live betting" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <TrendingUp size={24} />
+              <Ticket size={24} />
             </NavLink>
             <NavLink to="/leaderboard" title="Leaderboard" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <Medal size={24} />
@@ -748,23 +766,18 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink to="/store" title="Store" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-violet-500/10 text-violet-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <ShoppingBag size={24} />
             </NavLink>
-            <NavLink to="/profile" title="Profile" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <User size={24} />
-            </NavLink>
           </div>
-          <div className="hidden lg:mt-auto lg:block">
-            <div className="flex flex-col items-center gap-2">
-              <NavLink
-                  to="/profile"
-                  className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
-                  title="Profile"
-              >
-                <span className="text-xs font-bold">{userInitials}</span>
-              </NavLink>
-              <button onClick={onLogout} className="text-xs text-slate-500 hover:text-slate-400 flex items-center gap-1">
-                <LogOut size={12} /> Log out
-              </button>
-            </div>
+          <div className="flex flex-col items-center gap-2 ml-auto shrink-0 lg:ml-0 lg:mt-auto">
+            <NavLink
+                to="/profile"
+                className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
+                title="Profile"
+            >
+              <span className="text-xs font-bold">{userInitials}</span>
+            </NavLink>
+            <button type="button" onClick={onLogout} className="text-xs text-slate-500 hover:text-slate-400 flex items-center gap-1">
+              <LogOut size={12} /> Log out
+            </button>
           </div>
         </nav>
 
