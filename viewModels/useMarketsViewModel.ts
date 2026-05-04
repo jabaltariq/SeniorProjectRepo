@@ -37,8 +37,7 @@ function mergeIntoSearchCache(cache: Map<string, Market>, incoming: Market[]) {
 }
 
 function defaultSportTab(): string {
-  const tab = SPORT_TABS.find((t) => t !== 'ALL');
-  return tab ?? 'Football';
+  return 'ALL';
 }
 
 /**

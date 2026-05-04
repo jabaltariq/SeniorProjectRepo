@@ -3,11 +3,10 @@ import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
   Wallet as WalletIcon,
-  Zap,
+  Home,
   BarChart3,
   History,
   Gamepad2,
-  TrendingUp,
   Search,
   Users,
   Medal,
@@ -19,13 +18,10 @@ import {
   Flame,
   Clock3,
   ChevronRight,
-  Sparkles,
+  Ticket,
   Layers,
   LayoutGrid,
-  ChevronDown,
-  ChevronUp,
   CircleDot,
-  User,
 } from 'lucide-react';
 import type { Market, MarketOption, Bet } from '../models';
 import { BetSlip } from '../components/BetSlip';
@@ -508,13 +504,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
 
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Popular</p>
                   <div className="space-y-1.5 mb-4">
-                    <button
-                        type="button"
-                        className="w-full text-left px-2 py-1.5 rounded-md text-xs border border-slate-800 bg-slate-900/70 text-amber-300/90 hover:text-amber-200 transition-all inline-flex items-center gap-2"
-                    >
-                      <Sparkles size={12} />
-                      Boosts
-                    </button>
                     {uid && (
                         <BoostsCard uid={uid} activeBoost={activeBoost} onSelectBoost={setActiveBoost} />
                     )}
@@ -529,11 +518,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           <Flame size={13} className="text-cyan-400" />
                           Promotions
                         </span>
-                        {promotionsOpen ? (
-                            <ChevronUp size={14} className="text-slate-500 shrink-0" />
-                        ) : (
-                            <ChevronDown size={14} className="text-slate-500 shrink-0" />
-                        )}
+                        <Ticket size={14} className="text-slate-500 shrink-0" aria-hidden />
                       </button>
                       {promotionsOpen && (
                           <div className="px-3 pb-3 border-t border-slate-800">
@@ -760,11 +745,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               title="Home"
               className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/40 cursor-pointer [&.active]:ring-2 [&.active]:ring-blue-400 [&.active]:ring-offset-2 [&.active]:ring-offset-slate-900"
           >
-            <Zap className="text-white" size={24} />
+            <Home className="text-white" size={24} />
           </NavLink>
           <div className="flex lg:flex-col gap-4">
             <NavLink to="/bet" title="Live betting" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <TrendingUp size={24} />
+              <Ticket size={24} />
             </NavLink>
             <NavLink to="/leaderboard" title="Leaderboard" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <Medal size={24} />
@@ -781,23 +766,18 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink to="/store" title="Store" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-violet-500/10 text-violet-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <ShoppingBag size={24} />
             </NavLink>
-            <NavLink to="/profile" title="Profile" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <User size={24} />
-            </NavLink>
           </div>
-          <div className="hidden lg:mt-auto lg:block">
-            <div className="flex flex-col items-center gap-2">
-              <NavLink
-                  to="/profile"
-                  className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
-                  title="Profile"
-              >
-                <span className="text-xs font-bold">{userInitials}</span>
-              </NavLink>
-              <button onClick={onLogout} className="text-xs text-slate-500 hover:text-slate-400 flex items-center gap-1">
-                <LogOut size={12} /> Log out
-              </button>
-            </div>
+          <div className="flex flex-col items-center gap-2 ml-auto shrink-0 lg:ml-0 lg:mt-auto">
+            <NavLink
+                to="/profile"
+                className={({ isActive }) => `w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 hover:border-slate-500 hover:bg-slate-600 transition-all cursor-pointer ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900' : ''}`}
+                title="Profile"
+            >
+              <span className="text-xs font-bold">{userInitials}</span>
+            </NavLink>
+            <button type="button" onClick={onLogout} className="text-xs text-slate-500 hover:text-slate-400 flex items-center gap-1">
+              <LogOut size={12} /> Log out
+            </button>
           </div>
         </nav>
 

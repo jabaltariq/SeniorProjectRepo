@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Sparkles, ChevronDown, ChevronUp, TrendingUp, RefreshCcw } from 'lucide-react';
+import { Sparkles, Ticket, TrendingUp, RefreshCcw } from 'lucide-react';
 import { getUserBoosts, UserBoosts, BoostType } from '@/services/dbOps.ts';
 
 interface BoostsCardProps {
@@ -170,10 +170,7 @@ export const BoostsCard: React.FC<BoostsCardProps> = ({ uid, activeBoost, onSele
                         <span className="text-[10px] font-semibold text-amber-400/70 normal-case">· 1 active</span>
                     )}
                 </span>
-                {expanded
-                    ? <ChevronUp size={14} className="text-slate-500" />
-                    : <ChevronDown size={14} className="text-slate-500" />
-                }
+                <Ticket size={14} className="text-slate-500 shrink-0" aria-hidden />
             </button>
 
             {expanded && (
