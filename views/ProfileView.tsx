@@ -26,6 +26,8 @@ import {
 } from '@/services/dbOps';
 import type { Bet } from '../models';
 import { SettingsView } from './SettingsView';
+import { getUserStoreState } from '@/services/storeOps';
+import { findStoreAvatar } from '@/models/storeItems';
 
 interface ProfileViewProps {
   userInitials: string;
@@ -66,6 +68,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const [displayName, setDisplayName] = useState(isOwnProfile ? userEmail.split('@')[0] || 'My account' : 'Account');
   const [avatarText, setAvatarText] = useState(userInitials || 'BH');
+  // Equipped store avatar image URL — null means we fall back to initials.
+  // Loaded by the same loadAccount() effect below so we don't add another
+  // request lifecycle to keep track of.
+  const [equippedAvatarUrl, setEquippedAvatarUrl] = useState<string | null>(null);
   const [netWorth, setNetWorth] = useState(balance);
   const [wins, setWins] = useState(0);
   const [losses, setLosses] = useState(0);
@@ -124,13 +130,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       setLoading(true);
       try {
-        const [profile, bets, definitions] = await Promise.all([
+        const [profile, bets, definitions, storeState] = await Promise.all([
           getAccountProfile(profileUserId),
           getBets(profileUserId),
           getAchievementDefinitions(),
+          getUserStoreState(profileUserId),
         ]);
 
         if (cancelled) return;
+
+        // Resolve equipped avatar to an image URL. If no avatar is equipped
+        // (or the id is stale), this falls back to null and the existing
+        // initials span renders.
+        const equipped = findStoreAvatar(storeState.equippedAvatar);
+        setEquippedAvatarUrl(equipped?.imageUrl ?? null);
 
         setAchievementDefinitions(definitions);
 
@@ -300,8 +313,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-8">
         <div className="flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-6 flex-1 min-w-0">
           <div className="flex items-center gap-4 min-w-0">
-            <div className="w-20 h-20 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center shrink-0">
-              <span className="text-2xl font-bold text-blue-400">{avatarText}</span>
+            <div className="w-20 h-20 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center shrink-0 overflow-hidden">
+              {equippedAvatarUrl ? (
+                <img
+                  src={equippedAvatarUrl}
+                  alt={`${displayName}'s avatar`}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onError={() => setEquippedAvatarUrl(null)}
+                />
+              ) : (
+                <span className="text-2xl font-bold text-blue-400">{avatarText}</span>
+              )}
             </div>
             <div className="min-w-0">
               <h2 className="text-2xl font-bold text-white">{isOwnProfile ? 'Account' : `${displayName}'s account`}</h2>

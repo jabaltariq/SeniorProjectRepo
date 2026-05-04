@@ -1,5 +1,5 @@
 
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import { NavLink } from 'react-router-dom';
 import {Bet, Friend, SocialActivity} from '../models';
 import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';
@@ -12,14 +12,16 @@ import {
   sendFriendRequest,
   setUserPrivacy
 } from "@/services/dbOps.ts";
-import {Timestamp} from "firebase/firestore";
 import { CounterBetModal } from './CounterBetModal';
 
 interface SocialViewProps {
   friends: Friend[];
+  friendRequests: FriendRequest[];
   activities: SocialActivity[];
   onChallenge: (friend: Friend) => void;
   bets: Bet[];
+  userPrivacy: boolean;
+  userName?: string;
 }
 
 /*
@@ -28,7 +30,7 @@ delete the whole repository. signed aidan rodriguez at 2:04 am
  */
 export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests, activities, onChallenge, bets, userPrivacy, userName }) => {
   const [searchQuery, onSearchChange] = useState("")
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [privacy, togglePrivacy] = useState(userPrivacy);
   const betList : Bet[] = bets;
   const toggleDetails = (id : string) => {
@@ -67,9 +69,54 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
     return { kind: 'enabled', bet };
   };
 
-  const [visibleRequests, setVisibleRequests] = useState(friendRequests.filter(
-      request => request.receiver === userName
-  ))
+  // Optimistically hide a request the moment the user clicks Accept/Refuse,
+  // before the Firestore delete round-trips. The realtime subscription will
+  // catch up and the dismissed entry naturally falls out of `friendRequests`,
+  // at which point we drop it from the dismissed set so memory doesn't grow.
+  const [dismissedRequestIds, setDismissedRequestIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    setDismissedRequestIds((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(friendRequests.map((r) => r.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (live.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [friendRequests]);
+
+  // Use the current user's UID — not their username — to filter the inbox.
+  // The previous name-based filter let two `undefined` values match each
+  // other, which surfaced ghost requests on freshly created accounts.
+  const visibleRequests = useMemo(
+    () =>
+      friendRequests.filter(
+        (request) =>
+          (!currentUid || request.receiver === currentUid) &&
+          !dismissedRequestIds.has(request.id),
+      ),
+    [friendRequests, currentUid, dismissedRequestIds],
+  );
+
+  const respondToRequest = (request: FriendRequest, accepted: boolean) => {
+    setDismissedRequestIds((prev) => {
+      const next = new Set(prev);
+      next.add(request.id);
+      return next;
+    });
+    handleFriendRequest(request, accepted).catch((err) => {
+      console.error('Failed to handle friend request', err);
+      setDismissedRequestIds((prev) => {
+        const next = new Set(prev);
+        next.delete(request.id);
+        return next;
+      });
+    });
+  };
+
   useEffect(() => {
     togglePrivacy(userPrivacy);
   }, [userPrivacy])
@@ -113,8 +160,17 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
             </div>
           ))}
           <button
-              onClick={() =>
-                  sendFriendRequest(searchQuery, localStorage.getItem("uid")).then(() => onSearchChange(""))}
+              onClick={() => {
+                sendFriendRequest(searchQuery, localStorage.getItem("uid"))
+                  .then((result) => {
+                    if (result?.success) {
+                      onSearchChange("");
+                    } else if (result?.error) {
+                      console.warn('Friend request rejected:', result.error);
+                    }
+                  })
+                  .catch((err) => console.error('sendFriendRequest failed', err));
+              }}
               className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
             + Add Friend
           </button>
@@ -137,26 +193,20 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
         </div>
         }
         <div className="space-y-3">
-          {visibleRequests.map(friendRequest => (friendRequest.receiver == userName &&
-              <div key={friendRequest.receiver} className="glass-card rounded-2xl p-4 flex items-center border border-dashed border-slate-800 justify-between group hover:border-blue-500/30 transition-all">
+          {visibleRequests.map(friendRequest => (
+              <div key={friendRequest.id} className="glass-card rounded-2xl p-4 flex items-center border border-dashed border-slate-800 justify-between group hover:border-blue-500/30 transition-all">
                 <div className="flex items-center gap-3">
                   <div className="relative">
-                    Request from {friendRequest.sender}
+                    Request from {friendRequest.senderName ?? 'Unknown user'}
                   </div>
                   <div className="space-y-3">
                     <button
-                      onClick={() => {handleFriendRequest(friendRequest, true);
-                        const newList = visibleRequests.filter((item) => item.id !== friendRequest.id);
-                        setVisibleRequests(newList)
-                        }}
+                      onClick={() => respondToRequest(friendRequest, true)}
                       className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
                         Accept
                     </button>
                     <button
-                        onClick={() => {handleFriendRequest(friendRequest, false);
-                          const newList = visibleRequests.filter((item) => item.id !== friendRequest.id);
-                          setVisibleRequests(newList)
-                        }}
+                        onClick={() => respondToRequest(friendRequest, false)}
                         className="w-full py-3 rounded-2xl border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all text-xs font-bold uppercase tracking-widest">
                       Refuse
                     </button>
@@ -261,38 +311,49 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                     );
                   })()}
                 </div>
-                {expandedId === activity.id && (
-                    <div
-                        style = {{padding: '15px'}}
-                        className="">
-                    <div className="p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10">
-                      <div
-                          style = {{padding: '5px'}}
-                          className={"text-sm"}>
-                        <span className="font-bold text-slate-100">Stake: </span>
-                        <span> ${betList.find(obj => obj.id === activity.id).stake} </span>
+                {expandedId === activity.id && (() => {
+                  // Resolve the bet once instead of running .find() four
+                  // times and crashing if the row is missing from betList
+                  // (e.g. a freshly-streamed bet whose author doc was
+                  // dropped). placedAt is already a Date by the time it
+                  // reaches us — render it directly instead of calling
+                  // .toDate() on a Date.
+                  const expandedBet = betList.find(obj => obj.id === activity.id);
+                  if (!expandedBet) {
+                    return (
+                      <div style={{padding: '15px'}}>
+                        <div className="p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10 text-sm text-slate-400">
+                          Bet details unavailable.
+                        </div>
                       </div>
-                      <div
-                          style = {{padding: '5px'}}
-                          className={"text-sm"}>
-                        <span className="font-bold text-slate-100"> Odds: </span>
-                        <span>{betList.find(obj => obj.id === activity.id).odds} </span>
-                      </div>
-                      <div
-                          style = {{padding: '5px'}}
-                          className={"text-sm"}>
-                        <span className="font-bold text-slate-100"> Potential Payout: </span>
-                        <span>{betList.find(obj => obj.id === activity.id).potentialPayout}</span>
-                      </div>
-                      <div
-                          style = {{padding: '5px'}}
-                          className={"text-sm"}>
-                        <span className="font-bold text-slate-100"> Placed on: </span>
-                        <span>{(betList.find(obj => obj.id === activity.id).placedAt as unknown as Timestamp).toDate().toLocaleString()}</span>
+                    );
+                  }
+                  const placedAt = expandedBet.placedAt instanceof Date
+                    ? expandedBet.placedAt
+                    : new Date(expandedBet.placedAt as unknown as string);
+                  return (
+                    <div style={{padding: '15px'}} className="">
+                      <div className="p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10">
+                        <div style={{padding: '5px'}} className={"text-sm"}>
+                          <span className="font-bold text-slate-100">Stake: </span>
+                          <span> ${expandedBet.stake} </span>
+                        </div>
+                        <div style={{padding: '5px'}} className={"text-sm"}>
+                          <span className="font-bold text-slate-100"> Odds: </span>
+                          <span>{expandedBet.odds} </span>
+                        </div>
+                        <div style={{padding: '5px'}} className={"text-sm"}>
+                          <span className="font-bold text-slate-100"> Potential Payout: </span>
+                          <span>{expandedBet.potentialPayout}</span>
+                        </div>
+                        <div style={{padding: '5px'}} className={"text-sm"}>
+                          <span className="font-bold text-slate-100"> Placed on: </span>
+                          <span>{Number.isFinite(placedAt.getTime()) ? placedAt.toLocaleString() : 'Unknown'}</span>
+                        </div>
                       </div>
                     </div>
-                    </div>
-                )}
+                  );
+                })()}
                 </div>
             </div>
           ))}
