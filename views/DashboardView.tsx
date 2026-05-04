@@ -42,7 +42,7 @@ import { StoreView } from './StoreView';
 import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
-import { DAILY_BONUS_AMOUNT } from '../models/constants';
+import { DAILY_BONUS_AMOUNT, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
 import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
@@ -102,6 +102,9 @@ interface DashboardViewProps {
   markets: Market[];
   loading: boolean;
   error: string | null;
+  /** True while loading the cross-sport “upcoming” feed for search (single-sport tab only). */
+  globalSearchLoading: boolean;
+  globalSearchError: string | null;
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
@@ -144,6 +147,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     markets,
     loading,
     error,
+    globalSearchLoading,
+    globalSearchError,
     leaderboardEntries,
     friends,
     activity,
@@ -561,7 +566,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                       <input
                           type="text"
-                          placeholder={hasSelectedSport ? 'Search games...' : 'Select a sport tab to load markets'}
+                          placeholder={hasSelectedSport ? 'Search games (all sports)…' : 'Select a sport tab to load markets'}
                           value={searchQuery}
                           onChange={(e) => onSearchChange(e.target.value)}
                           disabled={!hasSelectedSport}
@@ -597,9 +602,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                   </button>
                               ))}
                         </div>
-                        <button className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-blue-300 transition-colors">
-                          View All Games <ChevronRight size={14} />
-                        </button>
+                        {markets.length >= VIEW_ALL_GAMES_VISIBLE_THRESHOLD && (
+                          <button
+                            type="button"
+                            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-blue-300 transition-colors"
+                          >
+                            View All Games <ChevronRight size={14} />
+                          </button>
+                        )}
                       </section>
                   )}
 
@@ -638,7 +648,21 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           <div className="text-center">Total</div>
                           <div className="text-center">Winner</div>
                         </div>
-                        {markets.length > 0 ? (
+                        {globalSearchError ? (
+                            <div className="col-span-full py-16 text-center px-4">
+                              <AlertCircle className="mx-auto text-amber-400 mb-3" size={40} />
+                              <h3 className="text-lg font-bold text-slate-200 mb-1">Couldn&apos;t load cross-sport search</h3>
+                              <p className="text-slate-500 text-sm mb-4">{globalSearchError}</p>
+                              <p className="text-slate-600 text-xs max-w-md mx-auto">
+                                Select <span className="font-semibold text-slate-400">All sports</span> in the sidebar, or try again in a moment.
+                              </p>
+                            </div>
+                        ) : globalSearchLoading && markets.length === 0 ? (
+                            <div className="col-span-full py-20 flex flex-col items-center gap-3">
+                              <Loader2 className="text-blue-400 animate-spin" size={40} />
+                              <p className="text-slate-400 text-sm">Searching all sports…</p>
+                            </div>
+                        ) : markets.length > 0 ? (
                             markets.map((market) => {
                               const teams = splitTeams(market.title);
                               const spreadAway = market.options.find((o) => o.marketKey === 'spreads' && o.label.toLowerCase().includes(teams.away.toLowerCase()));
@@ -717,7 +741,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               <BarChart3 className="mx-auto text-slate-700 mb-4" size={48} />
                               <h3 className="text-xl font-bold text-slate-500">No matches found</h3>
                               <p className="text-slate-600">
-                                {sportFilter === 'ALL' ? 'Try a different search term.' : leagueFilter !== 'ALL' ? `No ${leagueFilter} games at the moment. Try another league or sport.` : `No ${sportFilter} games at the moment. Try another sport.`}
+                                {searchQuery.trim()
+                                  ? 'Try a different search term.'
+                                  : leagueFilter !== 'ALL'
+                                    ? `No ${leagueFilter} games at the moment. Try another league or sport.`
+                                    : sportFilter === 'ALL'
+                                      ? 'No upcoming games in this window. Try again later.'
+                                      : `No ${sportFilter} games at the moment. Try another sport.`}
                               </p>
                             </div>
                         )}

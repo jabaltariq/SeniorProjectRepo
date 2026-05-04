@@ -8,6 +8,9 @@ export const BONUS_STORAGE_KEY = 'bethub_last_bonus_claim';
 
 export const SPORT_TABS = ['ALL', 'Football', 'Basketball', 'Baseball', 'Hockey', 'Soccer'] as const;
 
+/** Show “View All Games” only when the board already lists this many rows (avoids clutter for normal boards). */
+export const VIEW_ALL_GAMES_VISIBLE_THRESHOLD = 60;
+
 export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCcgJVGV0L95RkcRZ-jqzFAepr3N73wewQ",
   authDomain: "seniorproject-ce9fe.firebaseapp.com",

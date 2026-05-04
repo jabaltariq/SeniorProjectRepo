@@ -3,6 +3,27 @@ import type { Market } from '../models';
 import { fetchMarketsForSportTab } from '../services/oddsApiService';
 import { SPORT_TABS } from '../models/constants';
 
+const GLOBAL_SEARCH_DEBOUNCE_MS = 400;
+
+/** Text used for substring search (teams often appear only on spread/h2h option labels). */
+function marketSearchHaystack(m: Market): string {
+  const parts = [
+    m.title,
+    m.subtitle,
+    m.category,
+    m.sport_key ?? '',
+    ...m.options.map((o) => o.label),
+  ];
+  return parts.join(' ').toLowerCase().replace(/@/g, ' ');
+}
+
+function queryMatchesHaystack(haystack: string, rawQuery: string): boolean {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) return true;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return tokens.every((t) => haystack.includes(t));
+}
+
 function defaultSportTab(): string {
   const tab = SPORT_TABS.find((t) => t !== 'ALL');
   return tab ?? 'Football';
@@ -22,7 +43,12 @@ export function useMarketsViewModel() {
   const [sportFilter, setSportFilter] = useState<string>(initialSport);
   const [leagueFilter, setLeagueFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [globalSearchMarkets, setGlobalSearchMarkets] = useState<Market[]>([]);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [globalSearchError, setGlobalSearchError] = useState<string | null>(null);
   const fetchGeneration = useRef(0);
+  const globalSearchFetchGen = useRef(0);
+  const globalSearchPoolReadyRef = useRef(false);
   const didInitialFetch = useRef(false);
 
   const loadMarkets = useCallback(async (sportTab?: string) => {
@@ -71,20 +97,74 @@ export function useMarketsViewModel() {
     void loadMarkets(initialSport);
   }, [initialSport, loadMarkets]);
 
+  /** When searching from a single-sport tab, load the upcoming “all sports” feed once; reuse until search cleared or user picks ALL. */
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || sportFilter === 'ALL') {
+      globalSearchFetchGen.current += 1;
+      globalSearchPoolReadyRef.current = false;
+      setGlobalSearchLoading(false);
+      setGlobalSearchError(null);
+      setGlobalSearchMarkets([]);
+      return;
+    }
+
+    if (globalSearchPoolReadyRef.current) {
+      setGlobalSearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const gen = ++globalSearchFetchGen.current;
+    setGlobalSearchLoading(true);
+    setGlobalSearchError(null);
+
+    const t = window.setTimeout(async () => {
+      if (cancelled) return;
+      try {
+        const data = await fetchMarketsForSportTab('ALL', 'us');
+        if (cancelled || gen !== globalSearchFetchGen.current) return;
+        setGlobalSearchMarkets(data);
+        setGlobalSearchError(null);
+        globalSearchPoolReadyRef.current = true;
+      } catch (e) {
+        if (cancelled || gen !== globalSearchFetchGen.current) return;
+        setGlobalSearchError(e instanceof Error ? e.message : 'Failed to load odds');
+        globalSearchPoolReadyRef.current = false;
+      } finally {
+        if (!cancelled && gen === globalSearchFetchGen.current) {
+          setGlobalSearchLoading(false);
+        }
+      }
+    }, GLOBAL_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [searchQuery, sportFilter]);
+
+  const searchTrimmed = searchQuery.trim();
+  /** Single-sport tab + active search uses the global upcoming pool; ALL tab or no search uses the tab’s `markets`. */
+  const searchPool =
+    searchTrimmed && sportFilter !== 'ALL' ? globalSearchMarkets : markets;
+
   // Filter by sport tab + search, then by league (league options depend on sport)
-  const sportFilteredMarkets = markets.filter((m) => {
+  const sportFilteredMarkets = searchPool.filter((m) => {
     if (!sportFilter) return false;
-    const matchesSport = sportFilter === 'ALL' || m.category === sportFilter;
-    const matchesSearch =
-      m.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.subtitle.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSport && matchesSearch;
+    const inSportScope =
+      searchTrimmed && sportFilter !== 'ALL'
+        ? true
+        : sportFilter === 'ALL' || m.category === sportFilter;
+    const matchesSearch = queryMatchesHaystack(marketSearchHaystack(m), searchQuery);
+    return inSportScope && matchesSearch;
   });
 
   const availableLeagues = Array.from(new Set(sportFilteredMarkets.map((m) => m.subtitle))).sort();
+  // While searching, do not hide games behind a league chip (e.g. NCAAF-only vs NFL team names).
+  const effectiveLeagueFilter = searchTrimmed ? 'ALL' : leagueFilter;
   const leagueFiltered = sportFilteredMarkets.filter(
-    (m) => leagueFilter === 'ALL' || m.subtitle === leagueFilter
+    (m) => effectiveLeagueFilter === 'ALL' || m.subtitle === effectiveLeagueFilter
   );
 
   /** Drop events too far out to limit noise and match “soonest first” browsing. */
@@ -109,6 +189,8 @@ export function useMarketsViewModel() {
     hasSelectedSport: Boolean(sportFilter),
     loading,
     error,
+    globalSearchLoading: Boolean(searchTrimmed && sportFilter !== 'ALL' && globalSearchLoading),
+    globalSearchError: searchTrimmed && sportFilter !== 'ALL' ? globalSearchError : null,
     sportFilter,
     leagueFilter,
     searchQuery,

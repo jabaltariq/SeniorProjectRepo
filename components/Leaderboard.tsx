@@ -1,14 +1,84 @@
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { LeaderboardEntry } from '../models';
-import { Trophy, TrendingUp, Medal } from 'lucide-react';
+import { Trophy, TrendingUp, Medal, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface LeaderboardProps {
   entries: LeaderboardEntry[];
 }
 
+type SortKey = 'rank' | 'user' | 'netWorth' | 'winRate' | 'trend';
+type SortDir = 'asc' | 'desc';
+
+function trendScore(e: LeaderboardEntry): number {
+  return e.netWorth * (e.winRate / 100);
+}
+
 export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
+  const [sortKey, setSortKey] = useState<SortKey>('rank');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'user' ? 'asc' : 'desc');
+    }
+  };
+
+  const sortedEntries = useMemo(() => {
+    if (entries.length === 0) return entries;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const cmp = (a: LeaderboardEntry, b: LeaderboardEntry): number => {
+      switch (sortKey) {
+        case 'rank':
+          return (a.rank - b.rank) * dir;
+        case 'user':
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir;
+        case 'netWorth':
+          return (a.netWorth - b.netWorth) * dir;
+        case 'winRate':
+          return (a.winRate - b.winRate) * dir;
+        case 'trend':
+          return (trendScore(a) - trendScore(b)) * dir;
+        default:
+          return 0;
+      }
+    };
+    return [...entries].sort(cmp);
+  }, [entries, sortKey, sortDir]);
+
+  const isCanonicalRankOrder = sortKey === 'rank' && sortDir === 'asc';
+
+  const SortHeader: React.FC<{
+    label: string;
+    colKey: SortKey;
+    align?: 'left' | 'right';
+  }> = ({ label, colKey, align = 'left' }) => {
+    const active = sortKey === colKey;
+    return (
+      <th className={`px-6 py-4 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+        <button
+          type="button"
+          onClick={() => toggleSort(colKey)}
+          className={`inline-flex items-center gap-1.5 font-bold uppercase tracking-widest transition-colors hover:text-slate-300 ${
+            active ? 'text-blue-400' : 'text-slate-500'
+          }`}
+        >
+          {label}
+          {active &&
+            (sortDir === 'asc' ? (
+              <ArrowUp className="shrink-0" size={12} aria-hidden />
+            ) : (
+              <ArrowDown className="shrink-0" size={12} aria-hidden />
+            ))}
+        </button>
+      </th>
+    );
+  };
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center justify-between mb-8">
@@ -26,12 +96,12 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
       <div className="glass-card rounded-2xl overflow-hidden border-slate-800">
         <table className="w-full text-left">
           <thead>
-            <tr className="bg-slate-900/50 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-800">
-              <th className="px-6 py-4">Rank</th>
-              <th className="px-6 py-4">User</th>
-              <th className="px-6 py-4">Net Worth</th>
-              <th className="px-6 py-4">Win Rate</th>
-              <th className="px-6 py-4 text-right">Trend</th>
+            <tr className="bg-slate-900/50 text-[10px] border-b border-slate-800">
+              <SortHeader label="Rank" colKey="rank" />
+              <SortHeader label="User" colKey="user" />
+              <SortHeader label="Net Worth" colKey="netWorth" />
+              <SortHeader label="Win Rate" colKey="winRate" />
+              <SortHeader label="Trend" colKey="trend" align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50">
@@ -48,18 +118,20 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
                 </td>
               </tr>
             ) : (
-            entries.map((entry) => (
+            sortedEntries.map((entry, idx) => {
+              const displayRank = isCanonicalRankOrder ? entry.rank : idx + 1;
+              return (
               <tr 
                 key={entry.id} 
                 className={`hover:bg-blue-500/5 transition-colors ${entry.isCurrentUser ? 'bg-blue-600/10' : ''}`}
               >
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
-                    {entry.rank === 1 && <Medal className="text-yellow-400" size={16} />}
-                    {entry.rank === 2 && <Medal className="text-slate-300" size={16} />}
-                    {entry.rank === 3 && <Medal className="text-amber-600" size={16} />}
-                    <span className={`font-bold ${entry.rank <= 3 ? 'text-lg' : 'text-slate-400'}`}>
-                      #{entry.rank}
+                    {displayRank === 1 && <Medal className="text-yellow-400" size={16} />}
+                    {displayRank === 2 && <Medal className="text-slate-300" size={16} />}
+                    {displayRank === 3 && <Medal className="text-amber-600" size={16} />}
+                    <span className={`font-bold ${displayRank <= 3 ? 'text-lg' : 'text-slate-400'}`}>
+                      #{displayRank}
                     </span>
                   </div>
                 </td>
@@ -94,7 +166,8 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
                   <TrendingUp className="inline text-green-400" size={16} />
                 </td>
               </tr>
-            ))
+            );
+            })
             )}
           </tbody>
         </table>
