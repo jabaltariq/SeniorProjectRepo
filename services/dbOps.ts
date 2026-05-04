@@ -1,7 +1,6 @@
-import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, deleteDoc, Timestamp, runTransaction, deleteField, query, where, writeBatch, increment, QueryDocumentSnapshot, DocumentData, DocumentReference, addDoc } from "firebase/firestore";
+import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, deleteDoc, Timestamp, runTransaction, deleteField, query, where, orderBy, limit, writeBatch, increment, QueryDocumentSnapshot, DocumentData, DocumentReference, addDoc } from "firebase/firestore";
 import { db } from "@/models/constants.ts";
 import {Bet, LeaderboardEntry, ParlayLeg, BetStatus, Friend, SocialActivity, HeadToHead, HeadToHeadStatus} from "@/models";
-import {betList} from "@/services/authService.ts";
 import {randomInt} from "node:crypto";
 
 export var currBets = new Array<Bet>;
@@ -159,13 +158,24 @@ export async function getUserTheme(uid: string): Promise<UserThemeMode> {
     return data["themeMode"] === "light" ? "light" : "ocean";
 }
 
+/**
+ * @deprecated Used to translate the sender/receiver UID fields to display
+ * names so the UI could match against the current user's name. This caused
+ * a ghost-request bug when either side resolved to `undefined`, since two
+ * `undefined` values compared equal and any unrelated user could see it.
+ *
+ * The new code keeps sender/receiver as UIDs (unambiguous) and carries
+ * `senderName` separately for display only. Kept exported for any legacy
+ * call sites — should be removed once nothing imports it.
+ */
 export async function getFriendRequestsAsName(requests : FriendRequest[]) : Promise<FriendRequest[]> {
     var friendRequestsAsName: FriendRequest[] = [];
     for (const item of requests) {
-        const newFriendRequest = {
+        const newFriendRequest: FriendRequest = {
             id: item.id,
-            sender: await getUserName(item.sender),
-            receiver: await getUserName(item.receiver)
+            sender: item.sender,
+            receiver: item.receiver,
+            senderName: await getUserName(item.sender),
         };
         friendRequestsAsName.push(newFriendRequest)
     }
@@ -1184,163 +1194,483 @@ export interface CommunityActivity {
 }
 
 /**
- * Loads every public bet document and returns both:
- *   - a SocialActivity[] for the activity feed UI
- *   - a Bet[] of the same docs (fully populated, including the head-to-head
- *     fields eventId/sportKey/eventStartsAt/status/userID) so callers can
- *     resolve full bet details without re-fetching
- *
- * Callers that only want the activity feed may keep using the legacy
- * Promise<SocialActivity[]> shape via the .activities field on the result.
- *
- * @author Aidan Rodriguez (original); extended to return bets for H2H lookup
+ * How many recent bets the activity feed pulls in. Caps Firestore read cost
+ * and keeps the UI snappy as the bets collection grows.
  */
-export async function loadCommunityActivity() : Promise<CommunityActivity> {
-    const querySnapshot = await getDocs(collection(db, "bets"))
-    const socialActivityList : SocialActivity[] = []
-    const fullBetList : Bet[] = []
+const COMMUNITY_ACTIVITY_LIMIT = 50;
 
-    for (const docSnap of querySnapshot.docs) {
+/**
+ * Renders a placedAt Date as the short relative label the feed shows
+ * ("JUST NOW", "12M AGO", "3H AGO", "2D AGO", or a date for older entries).
+ */
+function formatActivityTimestamp(d: Date): string {
+    const ms = Date.now() - d.getTime();
+    if (!Number.isFinite(ms) || ms < 60_000) return "JUST NOW";
+    const mins = Math.floor(ms / 60_000);
+    if (mins < 60)  return `${mins}M AGO`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}H AGO`;
+    const days = Math.floor(hours / 24);
+    if (days < 7)   return `${days}D AGO`;
+    return d.toLocaleDateString();
+}
+
+/**
+ * Shared converter from a snapshot of bet documents into the
+ * CommunityActivity payload. Used by both the one-shot loader and the
+ * realtime subscription so they stay in lockstep.
+ *
+ * Fixes vs. the legacy implementation:
+ *   - Privacy branch is no longer inverted (privacy === true now hides
+ *     identity, matching the rest of the app).
+ *   - Parlays are kept (the UI already disables fading on them with a
+ *     reason); skipping them silently meant friends' parlays never showed.
+ *   - placedAt is threaded into SocialActivity.timestamp so feed entries
+ *     are dateable.
+ *   - User docs are fetched once per uid per snapshot instead of once per
+ *     bet, so an N-bet feed costs ~U user reads (U = unique authors)
+ *     instead of N.
+ *   - No more side-effect mutation of authService.betList.
+ */
+async function buildCommunityActivity(
+    docs: QueryDocumentSnapshot<DocumentData>[],
+): Promise<CommunityActivity> {
+    const uniqueUids = Array.from(
+        new Set(docs.map((d) => String(d.data()["userID"] ?? "")).filter(Boolean)),
+    );
+    const userDataByUid = new Map<string, DocumentData>();
+    await Promise.all(
+        uniqueUids.map(async (uid) => {
+            const snap = await getDoc(doc(db, "userInfo", uid));
+            const data = snap.data();
+            if (data) userDataByUid.set(uid, data);
+        }),
+    );
+
+    const activities: SocialActivity[] = [];
+    const bets: Bet[] = [];
+
+    for (const docSnap of docs) {
         const data = docSnap.data();
-
-        // Skip explicit parlays. Legacy bets written before the schema added
-        // betType have it `undefined` and should be treated as singles, so the
-        // check is "is this an explicit parlay?", not "is betType set?".
-        if (data["betType"] === "parlay") {
+        const uid = String(data["userID"] ?? "");
+        const userData = userDataByUid.get(uid);
+        if (!userData) {
+            // Author no longer exists; drop the row instead of crashing.
             continue;
         }
 
-        const documentReference = doc(db, "userInfo", data["userID"])
-        const documentSnapshot = await getDoc(documentReference);
+        const isPrivate = userData["privacy"] === true;
+        const rawName = typeof userData["name"] === "string" ? userData["name"] : "";
+        const userName = isPrivate || !rawName ? "Anonymous User" : rawName;
+        const userAvatar = isPrivate || !rawName ? "?" : rawName.slice(0, 2);
 
-        const userData = documentSnapshot.data();
+        const placedAtRaw    = data["placedAt"]      as Timestamp | undefined;
+        const eventStartsRaw = data["eventStartsAt"] as Timestamp | undefined;
+        const settledAtRaw   = data["settledAt"]     as Timestamp | undefined;
+        const placedAtDate   = placedAtRaw?.toDate?.() ?? new Date(0);
+        const isParlay       = data["betType"] === "parlay";
 
-        if (userData == undefined) {
-            console.log("user does not exist, throwing out document")
-            continue;
-        }
-
-        let newSocialActivity: SocialActivity;
-
-        if (userData["privacy"] == false) {
-            newSocialActivity = {
-                id: docSnap.id,
-                userId: documentSnapshot.id,
-                userName: "Anonymous User",
-                userAvatar: "?",
-                action: "placed a bet on",
-                target: data["marketTitle"],
-                timestamp: ""
-            }
-        }
-        else {
-            newSocialActivity = {
-                id: docSnap.id,
-                userId: documentSnapshot.id,
-                userName: userData["name"],
-                userAvatar: userData["name"]?.slice(0, 2),
-                action: "placed a bet on",
-                target: data["marketTitle"],
-                timestamp: ""
-            }
-        }
-
-        // Build a fully-populated Bet so the activity feed's Counter-Bet
-        // button has every field fadeEligibility() needs. The legacy
-        // betList push (kept for backwards compat with anything else that
-        // imports it from authService) intentionally uses the same object.
-        const placedAtRaw     = data["placedAt"]      as Timestamp | undefined;
-        const eventStartsRaw  = data["eventStartsAt"] as Timestamp | undefined;
-        const settledAtRaw    = data["settledAt"]     as Timestamp | undefined;
-        const newBet : Bet = {
+        const newBet: Bet = {
             id:              docSnap.id,
-            userID:          String(data["userID"] ?? ""),
+            userID:          uid,
             marketId:        String(data["marketId"]    ?? ""),
             marketTitle:     String(data["marketTitle"] ?? ""),
             optionLabel:     String(data["optionLabel"] ?? ""),
-            betType:         data["betType"] === "parlay" ? "parlay" : "single",
+            betType:         isParlay ? "parlay" : "single",
             stake:           Number(data["stake"])           || 0,
             odds:            Number(data["odds"])            || 0,
             potentialPayout: Number(data["potentialPayout"]) || 0,
-            placedAt:        placedAtRaw?.toDate?.() ?? new Date(0),
+            placedAt:        placedAtDate,
             status:          (data["status"] ?? "PENDING") as BetStatus,
             eventId:         data["eventId"]  ? String(data["eventId"])  : undefined,
             sportKey:        data["sportKey"] ? String(data["sportKey"]) : undefined,
             eventStartsAt:   eventStartsRaw?.toDate?.(),
             settledAt:       settledAtRaw?.toDate?.(),
-        }
-        betList.push(newBet)
-        fullBetList.push(newBet)
-        socialActivityList.push(newSocialActivity)
+        };
+        bets.push(newBet);
+
+        activities.push({
+            id:        docSnap.id,
+            userId:    uid,
+            userName,
+            userAvatar,
+            action:    isParlay ? "placed a parlay on" : "placed a bet on",
+            target:    String(data["marketTitle"] ?? ""),
+            timestamp: formatActivityTimestamp(placedAtDate),
+        });
     }
-    return { activities: socialActivityList, bets: fullBetList }
+
+    return { activities, bets };
 }
 
-export async function sendFriendRequest(username : string, senderUid : string) {
-    const querySnapshot = await getDocs(collection(db, "userInfo"));
+/**
+ * One-shot loader for the community activity feed. Kept for callers that
+ * just need a snapshot (e.g. tests or non-reactive contexts). Reactive UI
+ * should use subscribeToCommunityActivity below so new bets appear without
+ * a page reload.
+ *
+ * @author Aidan Rodriguez (original); reworked to share buildCommunityActivity
+ *   and to drop the authService.betList side effect / privacy inversion.
+ */
+export async function loadCommunityActivity(): Promise<CommunityActivity> {
+    const q = query(
+        collection(db, "bets"),
+        orderBy("placedAt", "desc"),
+        limit(COMMUNITY_ACTIVITY_LIMIT),
+    );
+    const snapshot = await getDocs(q);
+    return buildCommunityActivity(snapshot.docs);
+}
 
-    for (const docSnap of querySnapshot.docs) {
-        const data = docSnap.data()
-        if (data["name"] == username) {
-            await addDoc(collection(db, "friendRequests"), {
-                sender: senderUid,
-                receiver: docSnap.id,
-            })
-            console.log("added friend")
-            break;
-        }
-    }
+/**
+ * Subscribes to the community activity feed. The callback fires once with the
+ * initial snapshot and again every time a bet doc changes server-side.
+ * Returns an unsubscribe function — callers MUST invoke it on unmount.
+ */
+export function subscribeToCommunityActivity(
+    onUpdate: (data: CommunityActivity) => void,
+    onError?: (err: Error) => void,
+    feedLimit: number = COMMUNITY_ACTIVITY_LIMIT,
+): () => void {
+    const q = query(
+        collection(db, "bets"),
+        orderBy("placedAt", "desc"),
+        limit(feedLimit),
+    );
+
+    let cancelled = false;
+
+    const unsub = onSnapshot(
+        q,
+        (snapshot) => {
+            // Snapshot work is async (we fan out per-author user reads), so
+            // guard against races where the listener has been torn down by
+            // the time the activity payload is ready.
+            buildCommunityActivity(snapshot.docs)
+                .then((payload) => {
+                    if (cancelled) return;
+                    onUpdate(payload);
+                })
+                .catch((err) => {
+                    if (cancelled) return;
+                    if (onError) onError(err as Error);
+                    else console.error("subscribeToCommunityActivity build failed", err);
+                });
+        },
+        (err) => {
+            if (cancelled) return;
+            if (onError) onError(err);
+            else console.error("subscribeToCommunityActivity onSnapshot failed", err);
+        },
+    );
+
+    return () => {
+        cancelled = true;
+        unsub();
+    };
 }
 
 export interface FriendRequest {
     id: string,
+    /** Sender UID (Firebase Auth uid). Stored on the request doc. */
     sender: string,
+    /** Receiver UID. Stored on the request doc. */
     receiver: string,
+    /**
+     * Display-only sender username, resolved on read so the UI doesn't have
+     * to render a raw uid. Optional because legacy / one-shot callers may
+     * not bother to fetch it.
+     */
+    senderName?: string,
 }
 
+export interface SendFriendRequestResult {
+    success: boolean;
+    error?: string;
+}
+
+/**
+ * Sends a friend request. Validates inputs and rejects:
+ *   - empty/unknown recipient names
+ *   - self-friend attempts (no point, also caused weird flicker when the
+ *     sender's name happened to equal their own)
+ *   - duplicate pending requests in either direction (this used to spawn N
+ *     copies of the same request, polluting the inbox)
+ *   - users who are already friends
+ *
+ * Returns `{ success, error? }` instead of throwing so the UI can surface a
+ * reason. The legacy void return is preserved for callers that just `.then()`
+ * to clear the input field — a `success === true` result is truthy in JS.
+ */
+export async function sendFriendRequest(username : string, senderUid : string | null | undefined) : Promise<SendFriendRequestResult> {
+    if (!senderUid) {
+        return { success: false, error: "Not signed in" };
+    }
+    const trimmed = (username ?? "").trim();
+    if (!trimmed) {
+        return { success: false, error: "Enter a username" };
+    }
+
+    const recipientUid = await getUidByUsername(trimmed);
+    if (!recipientUid) {
+        return { success: false, error: "User not found" };
+    }
+    if (recipientUid === senderUid) {
+        return { success: false, error: "Can't friend yourself" };
+    }
+
+    // Already friends?
+    const senderSnap = await getDoc(doc(db, "userInfo", senderUid));
+    const senderFriends = (senderSnap.data()?.["friends"] ?? []) as string[];
+    if (Array.isArray(senderFriends) && senderFriends.includes(recipientUid)) {
+        return { success: false, error: "Already friends" };
+    }
+
+    // Duplicate request in either direction?
+    const outgoing = await getDocs(query(
+        collection(db, "friendRequests"),
+        where("sender", "==", senderUid),
+        where("receiver", "==", recipientUid),
+    ));
+    if (!outgoing.empty) {
+        return { success: false, error: "Request already pending" };
+    }
+    const incoming = await getDocs(query(
+        collection(db, "friendRequests"),
+        where("sender", "==", recipientUid),
+        where("receiver", "==", senderUid),
+    ));
+    if (!incoming.empty) {
+        return { success: false, error: "They've already requested you" };
+    }
+
+    await addDoc(collection(db, "friendRequests"), {
+        sender: senderUid,
+        receiver: recipientUid,
+    });
+    return { success: true };
+}
+
+/**
+ * One-shot fetch of friend requests touching `uid` (either as sender or
+ * receiver). Kept for non-reactive callers; reactive UI should use
+ * subscribeToFriendRequests below so a request shows up the moment it's
+ * sent and disappears the moment it's accepted/rejected.
+ *
+ * Now uses Firestore where() filters instead of a full collection scan, so
+ * cost scales with the number of relevant requests rather than the entire
+ * friendRequests table.
+ */
 export async function getFriendRequests(uid : string) : Promise<FriendRequest[]> {
-    const querySnapshot = await getDocs(collection(db, "friendRequests"))
-    var friendRequests : FriendRequest[] = []
-    for (const docSnap of querySnapshot.docs) {
-        const data = docSnap.data()
-        if (data["sender"] == uid || data["receiver"] == uid) {
-            const newFriendRequest = {
-                id: docSnap.id,
-                sender: data["sender"],
-                receiver: data["receiver"]
-            }
-            friendRequests.push(newFriendRequest)
-        }
+    if (!uid) return [];
+    const [byReceiver, bySender] = await Promise.all([
+        getDocs(query(collection(db, "friendRequests"), where("receiver", "==", uid))),
+        getDocs(query(collection(db, "friendRequests"), where("sender",   "==", uid))),
+    ]);
+
+    const seen = new Set<string>();
+    const result: FriendRequest[] = [];
+    for (const docSnap of [...byReceiver.docs, ...bySender.docs]) {
+        if (seen.has(docSnap.id)) continue;
+        seen.add(docSnap.id);
+        const data = docSnap.data();
+        result.push({
+            id: docSnap.id,
+            sender: String(data["sender"] ?? ""),
+            receiver: String(data["receiver"] ?? ""),
+        });
     }
-    return friendRequests
+    return result;
 }
 
-export async function handleFriendRequest (request : FriendRequest, accepted : boolean) {
-    if (accepted) {
-        console.log(request)
-        const querySnapshot = await getDocs(collection(db, "userInfo"));
-
-        for (const docSnap of querySnapshot.docs) {
-            const data = docSnap.data()
-            if (data["name"] == request.sender) {
-                addFriend(data["name"], await getUidByUsername(request.receiver))
-            }
-            else if (data["name"] == request.receiver) {
-                addFriend(data["name"], await getUidByUsername(request.sender))
-            }
-        }
-        const documentReference = doc(db, "friendRequests", request.id)
-
-        await deleteDoc(documentReference)
-        console.log("Deleted friend request from database.")
+/**
+ * Realtime subscription to friend requests *received* by `uid`. Fires once
+ * with the initial snapshot and again whenever the Firestore-side set
+ * changes (request created, accepted, refused, deleted). Sender display
+ * names are resolved per-snapshot with a Map cache so it costs ~U user
+ * reads per change (U = unique senders in the inbox).
+ *
+ * Returns an unsubscribe function — callers MUST invoke it on unmount.
+ */
+export function subscribeToFriendRequests(
+    uid: string | null | undefined,
+    onUpdate: (requests: FriendRequest[]) => void,
+    onError?: (err: Error) => void,
+): () => void {
+    if (!uid) {
+        onUpdate([]);
+        return () => {};
     }
-    else {
-        const documentReference = doc(db, "friendRequests", request.id)
 
-        await deleteDoc(documentReference)
-        console.log("Deleted friend request from database.")
-    }
+    const q = query(collection(db, "friendRequests"), where("receiver", "==", uid));
+    let cancelled = false;
+
+    const unsub = onSnapshot(
+        q,
+        (snapshot) => {
+            const senderUids = Array.from(new Set(
+                snapshot.docs
+                    .map((d) => String(d.data()["sender"] ?? ""))
+                    .filter(Boolean),
+            ));
+
+            (async () => {
+                const senderNameByUid = new Map<string, string>();
+                await Promise.all(
+                    senderUids.map(async (senderUid) => {
+                        const snap = await getDoc(doc(db, "userInfo", senderUid));
+                        const data = snap.data();
+                        if (data && typeof data["name"] === "string") {
+                            senderNameByUid.set(senderUid, data["name"]);
+                        }
+                    }),
+                );
+                if (cancelled) return;
+
+                const rows: FriendRequest[] = snapshot.docs.map((docSnap) => {
+                    const data = docSnap.data();
+                    const senderUid = String(data["sender"] ?? "");
+                    return {
+                        id: docSnap.id,
+                        sender: senderUid,
+                        receiver: String(data["receiver"] ?? ""),
+                        senderName: senderNameByUid.get(senderUid) ?? "Unknown user",
+                    };
+                });
+
+                onUpdate(rows);
+            })().catch((err) => {
+                if (cancelled) return;
+                if (onError) onError(err as Error);
+                else console.error("subscribeToFriendRequests build failed", err);
+            });
+        },
+        (err) => {
+            if (cancelled) return;
+            if (onError) onError(err);
+            else console.error("subscribeToFriendRequests onSnapshot failed", err);
+        },
+    );
+
+    return () => {
+        cancelled = true;
+        unsub();
+    };
 }
+
+/**
+ * Internal helper: adds `friendUid` to `currUid`'s `friends` array (and
+ * vice versa if `bidirectional` is true). Idempotent — already-friend
+ * pairs are a no-op. Operates on UIDs only so the caller doesn't have to
+ * round-trip through usernames.
+ */
+async function addFriendBidirectional(uidA: string, uidB: string): Promise<void> {
+    if (!uidA || !uidB || uidA === uidB) return;
+    const refA = doc(db, "userInfo", uidA);
+    const refB = doc(db, "userInfo", uidB);
+    const [snapA, snapB] = await Promise.all([getDoc(refA), getDoc(refB)]);
+    const aFriends = Array.isArray(snapA.data()?.["friends"]) ? (snapA.data()!["friends"] as string[]) : [];
+    const bFriends = Array.isArray(snapB.data()?.["friends"]) ? (snapB.data()!["friends"] as string[]) : [];
+
+    const writes: Promise<unknown>[] = [];
+    if (!aFriends.includes(uidB)) {
+        writes.push(setDoc(refA, { friends: [...aFriends, uidB] }, { merge: true }));
+    }
+    if (!bFriends.includes(uidA)) {
+        writes.push(setDoc(refB, { friends: [...bFriends, uidA] }, { merge: true }));
+    }
+    if (writes.length) await Promise.all(writes);
+}
+
+/**
+ * Accepts or refuses a friend request. The friendRequests doc is deleted in
+ * both branches so the inbox empties immediately and the request can never
+ * be "re-accepted". On accept, both users' `friends` arrays are updated
+ * before the doc is deleted so a network failure doesn't lose the request.
+ */
+export async function handleFriendRequest(request: FriendRequest, accepted: boolean): Promise<void> {
+    if (!request?.id) return;
+
+    if (accepted && request.sender && request.receiver) {
+        await addFriendBidirectional(request.sender, request.receiver);
+    }
+
+    await deleteDoc(doc(db, "friendRequests", request.id));
+}
+/**
+ * Realtime subscription to the current user's friends list. Listens to the
+ * user's userInfo doc and re-resolves the `friends` array on every change,
+ * so accepting/refusing a friend request, or being added/removed by someone
+ * else, updates the UI without a refresh.
+ *
+ * Returns an unsubscribe function — callers MUST invoke it on unmount.
+ */
+export function subscribeToFriends(
+    uid: string | null | undefined,
+    onUpdate: (friends: Friend[]) => void,
+    onError?: (err: Error) => void,
+): () => void {
+    if (!uid) {
+        onUpdate([]);
+        return () => {};
+    }
+
+    let cancelled = false;
+
+    const unsub = onSnapshot(
+        doc(db, "userInfo", uid),
+        (snap) => {
+            const data = snap.data();
+            const friendUids = Array.isArray(data?.["friends"])
+                ? (data!["friends"] as unknown[]).filter((u): u is string => typeof u === "string" && u.length > 0)
+                : [];
+
+            (async () => {
+                // Resolve friend docs in parallel; preserve original order.
+                const orderIndex = new Map<string, number>(friendUids.map((u, i) => [u, i]));
+                const resolved = await Promise.all(
+                    friendUids.map(async (friendUid) => {
+                        const friendSnap = await getDoc(doc(db, "userInfo", friendUid));
+                        if (!friendSnap.exists()) return null;
+                        const friendData = friendSnap.data();
+                        const name = typeof friendData["name"] === "string" ? friendData["name"] : "Unknown";
+                        const friend: Friend = {
+                            id: friendUid,
+                            name,
+                            avatar: name.slice(0, 2),
+                            status: 'online',
+                            lastActive: "dont care",
+                            privacyEnabled: friendData["privacy"] === true,
+                        };
+                        return friend;
+                    }),
+                );
+                if (cancelled) return;
+
+                const friends = resolved
+                    .filter((f): f is Friend => f !== null)
+                    .sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0));
+
+                onUpdate(friends);
+            })().catch((err) => {
+                if (cancelled) return;
+                if (onError) onError(err as Error);
+                else console.error('subscribeToFriends build failed', err);
+            });
+        },
+        (err) => {
+            if (cancelled) return;
+            if (onError) onError(err);
+            else console.error('subscribeToFriends onSnapshot failed', err);
+        },
+    );
+
+    return () => {
+        cancelled = true;
+        unsub();
+    };
+}
+
 export async function getFriends(uid : string) : Promise<Friend[]> {
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);
