@@ -61,7 +61,7 @@ const App: React.FC = () => {
         leagueFilter={dashboard.markets.leagueFilter}
         searchQuery={dashboard.markets.searchQuery}
         sportTabs={dashboard.markets.sportTabs}
-        availableLeagues={dashboard.markets.availableLeagues}
+        sportFilteredMarkets={dashboard.markets.sportFilteredMarkets}
         markets={dashboard.markets.markets}
         loading={dashboard.markets.loading}
         error={dashboard.markets.error}
