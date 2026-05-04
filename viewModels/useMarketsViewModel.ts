@@ -1,9 +1,10 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useReducer, useMemo } from 'react';
 import type { Market } from '../models';
 import { fetchMarketsForSportTab } from '../services/oddsApiService';
 import { SPORT_TABS } from '../models/constants';
 
-const GLOBAL_SEARCH_DEBOUNCE_MS = 400;
+/** Cap deduped events kept for instant search (memory + stale data tradeoff). */
+const MAX_MARKET_SEARCH_CACHE = 1200;
 
 /** Text used for substring search (teams often appear only on spread/h2h option labels). */
 function marketSearchHaystack(m: Market): string {
@@ -24,6 +25,17 @@ function queryMatchesHaystack(haystack: string, rawQuery: string): boolean {
   return tokens.every((t) => haystack.includes(t));
 }
 
+function mergeIntoSearchCache(cache: Map<string, Market>, incoming: Market[]) {
+  for (const m of incoming) {
+    cache.set(m.id, m);
+  }
+  while (cache.size > MAX_MARKET_SEARCH_CACHE) {
+    const first = cache.keys().next().value;
+    if (first === undefined) break;
+    cache.delete(first);
+  }
+}
+
 function defaultSportTab(): string {
   const tab = SPORT_TABS.find((t) => t !== 'ALL');
   return tab ?? 'Football';
@@ -31,9 +43,7 @@ function defaultSportTab(): string {
 
 /**
  * Odds/markets from The Odds API. Filters: sport tab, league, search.
- * Defaults to the first sport tab and loads odds on mount; league filter defaults to ALL.
- * Sport filter `ALL` = all sports (single upcoming odds request). With league ALL, boards list
- * games soonest-first and hide kickoffs beyond 30 days (LIVE always kept).
+ * Search is in-memory only: each successful tab load merges into a deduped cache (zero extra API calls).
  */
 export function useMarketsViewModel() {
   const initialSport = defaultSportTab();
@@ -43,13 +53,10 @@ export function useMarketsViewModel() {
   const [sportFilter, setSportFilter] = useState<string>(initialSport);
   const [leagueFilter, setLeagueFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [globalSearchMarkets, setGlobalSearchMarkets] = useState<Market[]>([]);
-  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
-  const [globalSearchError, setGlobalSearchError] = useState<string | null>(null);
   const fetchGeneration = useRef(0);
-  const globalSearchFetchGen = useRef(0);
-  const globalSearchPoolReadyRef = useRef(false);
   const didInitialFetch = useRef(false);
+  const marketSearchCacheRef = useRef(new Map<string, Market>());
+  const [searchCacheTick, bumpSearchCache] = useReducer((n: number) => n + 1, 0);
 
   const loadMarkets = useCallback(async (sportTab?: string) => {
     const tab = sportTab ?? sportFilter;
@@ -62,6 +69,8 @@ export function useMarketsViewModel() {
       const data = await fetchMarketsForSportTab(tab, 'us');
       if (gen !== fetchGeneration.current) return;
       setMarkets(data);
+      mergeIntoSearchCache(marketSearchCacheRef.current, data);
+      bumpSearchCache();
     } catch (e) {
       if (gen !== fetchGeneration.current) return;
       setError(e instanceof Error ? e.message : 'Failed to load odds');
@@ -97,65 +106,18 @@ export function useMarketsViewModel() {
     void loadMarkets(initialSport);
   }, [initialSport, loadMarkets]);
 
-  /** When searching from a single-sport tab, load the upcoming “all sports” feed once; reuse until search cleared or user picks ALL. */
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (!q || sportFilter === 'ALL') {
-      globalSearchFetchGen.current += 1;
-      globalSearchPoolReadyRef.current = false;
-      setGlobalSearchLoading(false);
-      setGlobalSearchError(null);
-      setGlobalSearchMarkets([]);
-      return;
-    }
-
-    if (globalSearchPoolReadyRef.current) {
-      setGlobalSearchLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    const gen = ++globalSearchFetchGen.current;
-    setGlobalSearchLoading(true);
-    setGlobalSearchError(null);
-
-    const t = window.setTimeout(async () => {
-      if (cancelled) return;
-      try {
-        const data = await fetchMarketsForSportTab('ALL', 'us');
-        if (cancelled || gen !== globalSearchFetchGen.current) return;
-        setGlobalSearchMarkets(data);
-        setGlobalSearchError(null);
-        globalSearchPoolReadyRef.current = true;
-      } catch (e) {
-        if (cancelled || gen !== globalSearchFetchGen.current) return;
-        setGlobalSearchError(e instanceof Error ? e.message : 'Failed to load odds');
-        globalSearchPoolReadyRef.current = false;
-      } finally {
-        if (!cancelled && gen === globalSearchFetchGen.current) {
-          setGlobalSearchLoading(false);
-        }
-      }
-    }, GLOBAL_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [searchQuery, sportFilter]);
-
   const searchTrimmed = searchQuery.trim();
-  /** Single-sport tab + active search uses the global upcoming pool; ALL tab or no search uses the tab’s `markets`. */
-  const searchPool =
-    searchTrimmed && sportFilter !== 'ALL' ? globalSearchMarkets : markets;
+  const searchPool = useMemo(() => {
+    if (!searchTrimmed) return markets;
+    return Array.from(marketSearchCacheRef.current.values());
+  }, [searchTrimmed, markets, searchCacheTick]);
 
   // Filter by sport tab + search, then by league (league options depend on sport)
   const sportFilteredMarkets = searchPool.filter((m) => {
     if (!sportFilter) return false;
-    const inSportScope =
-      searchTrimmed && sportFilter !== 'ALL'
-        ? true
-        : sportFilter === 'ALL' || m.category === sportFilter;
+    const inSportScope = searchTrimmed
+      ? true
+      : sportFilter === 'ALL' || m.category === sportFilter;
     const matchesSearch = queryMatchesHaystack(marketSearchHaystack(m), searchQuery);
     return inSportScope && matchesSearch;
   });
@@ -189,8 +151,7 @@ export function useMarketsViewModel() {
     hasSelectedSport: Boolean(sportFilter),
     loading,
     error,
-    globalSearchLoading: Boolean(searchTrimmed && sportFilter !== 'ALL' && globalSearchLoading),
-    globalSearchError: searchTrimmed && sportFilter !== 'ALL' ? globalSearchError : null,
+    searchCacheMarketCount: marketSearchCacheRef.current.size,
     sportFilter,
     leagueFilter,
     searchQuery,

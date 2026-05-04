@@ -65,8 +65,7 @@ const App: React.FC = () => {
         markets={dashboard.markets.markets}
         loading={dashboard.markets.loading}
         error={dashboard.markets.error}
-        globalSearchLoading={dashboard.markets.globalSearchLoading}
-        globalSearchError={dashboard.markets.globalSearchError}
+        searchCacheMarketCount={dashboard.markets.searchCacheMarketCount}
         leaderboardEntries={dashboard.leaderboardEntries}
         friends={dashboard.friends}
         activity={dashboard.activity}

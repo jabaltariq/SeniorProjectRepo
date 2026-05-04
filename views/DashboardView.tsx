@@ -102,9 +102,8 @@ interface DashboardViewProps {
   markets: Market[];
   loading: boolean;
   error: string | null;
-  /** True while loading the cross-sport “upcoming” feed for search (single-sport tab only). */
-  globalSearchLoading: boolean;
-  globalSearchError: string | null;
+  /** Unique games merged into the in-memory search index (from tab loads only). */
+  searchCacheMarketCount: number;
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
@@ -147,8 +146,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     markets,
     loading,
     error,
-    globalSearchLoading,
-    globalSearchError,
+    searchCacheMarketCount,
     leaderboardEntries,
     friends,
     activity,
@@ -566,7 +564,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                       <input
                           type="text"
-                          placeholder={hasSelectedSport ? 'Search games (all sports)…' : 'Select a sport tab to load markets'}
+                          placeholder={hasSelectedSport ? 'Search loaded games…' : 'Select a sport tab to load markets'}
                           value={searchQuery}
                           onChange={(e) => onSearchChange(e.target.value)}
                           disabled={!hasSelectedSport}
@@ -648,21 +646,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           <div className="text-center">Total</div>
                           <div className="text-center">Winner</div>
                         </div>
-                        {globalSearchError ? (
-                            <div className="col-span-full py-16 text-center px-4">
-                              <AlertCircle className="mx-auto text-amber-400 mb-3" size={40} />
-                              <h3 className="text-lg font-bold text-slate-200 mb-1">Couldn&apos;t load cross-sport search</h3>
-                              <p className="text-slate-500 text-sm mb-4">{globalSearchError}</p>
-                              <p className="text-slate-600 text-xs max-w-md mx-auto">
-                                Select <span className="font-semibold text-slate-400">All sports</span> in the sidebar, or try again in a moment.
-                              </p>
-                            </div>
-                        ) : globalSearchLoading && markets.length === 0 ? (
-                            <div className="col-span-full py-20 flex flex-col items-center gap-3">
-                              <Loader2 className="text-blue-400 animate-spin" size={40} />
-                              <p className="text-slate-400 text-sm">Searching all sports…</p>
-                            </div>
-                        ) : markets.length > 0 ? (
+                        {markets.length > 0 ? (
                             markets.map((market) => {
                               const teams = splitTeams(market.title);
                               const spreadAway = market.options.find((o) => o.marketKey === 'spreads' && o.label.toLowerCase().includes(teams.away.toLowerCase()));
@@ -742,7 +726,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               <h3 className="text-xl font-bold text-slate-500">No matches found</h3>
                               <p className="text-slate-600">
                                 {searchQuery.trim()
-                                  ? 'Try a different search term.'
+                                  ? searchCacheMarketCount === 0
+                                    ? 'Open a few sport tabs first so games load into search—search uses no extra API calls.'
+                                    : 'No match in loaded games. Try another word or open another sport tab to add more lines.'
                                   : leagueFilter !== 'ALL'
                                     ? `No ${leagueFilter} games at the moment. Try another league or sport.`
                                     : sportFilter === 'ALL'
