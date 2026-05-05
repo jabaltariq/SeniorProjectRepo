@@ -45,6 +45,7 @@ function defaultSportTab(): string {
  * Search is in-memory only: each successful tab load merges into a deduped cache (zero extra API calls).
  */
 export function useMarketsViewModel() {
+  const MOCK_NFL_LEAGUE = 'NFL';
   const initialSport = defaultSportTab();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(false);
@@ -83,7 +84,11 @@ export function useMarketsViewModel() {
   const handleSportFilter = useCallback(
     (sport: string) => {
       setSportFilter(sport);
-      setLeagueFilter('ALL');
+      if (sport === 'Football') {
+        setLeagueFilter(MOCK_NFL_LEAGUE);
+      } else {
+        setLeagueFilter('ALL');
+      }
       void loadMarkets(sport);
     },
     [loadMarkets]

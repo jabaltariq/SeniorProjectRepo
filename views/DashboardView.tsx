@@ -39,7 +39,7 @@ import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
 import { DAILY_BONUS_AMOUNT, MOCK_NFL_TEAM_POOL, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
-import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForChange, saveUserMockNflGames } from "@/services/dbOps.ts";
+import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForChange, saveUserMockNflGames, settleUserMockNflGameBets } from "@/services/dbOps.ts";
 import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
@@ -249,6 +249,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   }, [userUid]);
 
   const simulateMockGame = async (gameId: string, mode: 'RANDOM' | 'AWAY' | 'HOME') => {
+    let finalizedGame: MockNflGameState | null = null;
     const next = mockNflGames.map((g) => {
       if (g.id !== gameId) return g;
       const awayBase = Math.floor(randomBetween(7, 38));
@@ -271,11 +272,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         winner,
         updatedAtMs: Date.now(),
       };
+      finalizedGame = finalized;
       return finalized;
     });
     setMockNflGames(next);
     if (userUid) {
       await saveUserMockNflGames(userUid, next);
+      if (finalizedGame) {
+        await settleUserMockNflGameBets(userUid, finalizedGame);
+      }
     }
   };
 
@@ -500,8 +505,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       const key = `${m.category}||${m.subtitle}`;
       if (!seen.has(key)) seen.set(key, { league: m.subtitle, sport: m.category });
     }
-    return Array.from(seen.values()).sort((a, b) => a.league.localeCompare(b.league));
+    const rows = Array.from(seen.values()).sort((a, b) => a.league.localeCompare(b.league));
+    const hasNflRow = rows.some((r) => r.sport === 'Football' && r.league.toLowerCase() === 'nfl');
+    if (sportFilter === 'Football' && !hasNflRow) {
+      rows.unshift({ sport: 'Football', league: 'NFL' });
+    }
+    return rows;
   })();
+  const footballApiLeagues = leagueNavRows.filter((r) => r.sport === 'Football' && r.league.toLowerCase() !== 'nfl');
 
   const safeBalance = Number.isFinite(balance) ? balance : 0;
   const displayBalance = `$${Math.max(0, safeBalance).toFixed(2)}`;
@@ -619,9 +630,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         );
       case 'MARKETS':
       default:
-        const showMockNflBoard =
-          sportFilter === 'Football' &&
-          (leagueFilter === 'ALL' || leagueFilter.toLowerCase().includes('nfl'));
+        const showMockNflBoard = sportFilter === 'Football' && leagueFilter.toLowerCase() === 'nfl';
+        const showApiMarketsTable = !(sportFilter === 'Football' && leagueFilter.toLowerCase() === 'nfl');
+        const showLoadingState = loading && !showMockNflBoard;
+        const showErrorState = Boolean(error) && !showMockNflBoard;
         return (
             <>
               <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)] gap-5">
@@ -640,7 +652,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         <button
                             key={`tile-${tab}`}
                             type="button"
-                            onClick={() => onSportFilter(tab)}
+                            onClick={() => {
+                              if (tab === 'Football') {
+                                onSelectLeagueInSport('Football', 'NFL');
+                                return;
+                              }
+                              onSportFilter(tab);
+                            }}
                             title={tab}
                             className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
                                 sportPrimarySelected
@@ -777,7 +795,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               .map((tab) => (
                                   <button
                                       key={`trend-tab-${tab}`}
-                                      onClick={() => onSportFilter(tab)}
+                                      onClick={() => {
+                                        if (tab === 'Football') {
+                                          onSelectLeagueInSport('Football', 'NFL');
+                                          return;
+                                        }
+                                        onSportFilter(tab);
+                                      }}
                                       className={`shrink-0 inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition-all ${
                                           sportFilter === tab
                                               ? 'border-violet-400/80 bg-violet-500/20 text-violet-200'
@@ -810,12 +834,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           Pick a sport tab in the sidebar or trending row. We only fetch odds after you select a filter.
                         </p>
                       </div>
-                  ) : loading ? (
+                  ) : showLoadingState ? (
                       <div className="flex flex-col items-center justify-center py-20 gap-4">
                         <Loader2 className="text-blue-400 animate-spin" size={48} />
                         <p className="text-slate-400">Loading live odds...</p>
                       </div>
-                  ) : error ? (
+                  ) : showErrorState ? (
                       <div className="glass-card rounded-2xl p-8 text-center border-red-500/20">
                         <AlertCircle className="mx-auto text-red-400 mb-4" size={48} />
                         <h3 className="text-xl font-bold text-slate-200 mb-2">Couldn&apos;t load odds</h3>
@@ -841,6 +865,23 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                 <span className="text-xs text-slate-300">Simulate outcomes and place test bets</span>
                               </div>
                             </div>
+                            {footballApiLeagues.length > 0 && (
+                              <div className="mb-3 rounded-md border border-slate-700/80 bg-slate-900/70 px-2.5 py-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">NCAA Football (API)</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {footballApiLeagues.slice(0, 4).map((row) => (
+                                    <button
+                                      key={`ncaa-widget-${row.league}`}
+                                      type="button"
+                                      onClick={() => onSelectLeagueInSport('Football', row.league)}
+                                      className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:border-blue-500/70 hover:text-blue-200"
+                                    >
+                                      {row.league}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             <div className="space-y-2">
                               {mockNflGames.map((game) => (
                                 <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
@@ -854,6 +895,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                     const mlHome = mockMarket.options[5];
                                     const bettable = game.status !== 'FINAL';
                                     const mockBetOutcome = resolveMockBetOutcome(game);
+                                    const latestMockBet = getLatestUserMockBet(game.id);
                                     const finalCardTone =
                                       mockBetOutcome === 'WON'
                                         ? 'border-emerald-500/30 bg-emerald-500/10'
@@ -901,6 +943,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                             <p className={`font-semibold ${finalTextTone}`}>
                                               Winner: {game.winner === 'AWAY' ? game.awayTeam : game.homeTeam}
                                             </p>
+                                            {latestMockBet && (
+                                              <p className={`mt-1 ${finalTextTone}`}>
+                                                Spent: ${latestMockBet.stake.toFixed(2)} • To win: ${latestMockBet.potentialPayout.toFixed(2)}
+                                              </p>
+                                            )}
                                           </div>
                                           <button
                                             type="button"
@@ -1005,6 +1052,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             </div>
                           </div>
                         )}
+                        {showApiMarketsTable && (
+                          <>
                         <div className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] bg-slate-900/75 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                           <div>Game</div>
                           <div className="text-center">Spread</div>
@@ -1102,6 +1151,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       : `No ${sportFilter} games at the moment. Try another sport.`}
                               </p>
                             </div>
+                        )}
+                          </>
                         )}
                       </div>
                   )}

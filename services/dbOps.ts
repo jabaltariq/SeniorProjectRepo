@@ -547,6 +547,81 @@ export async function saveUserMockNflGames(uid: string, games: MockNflGameState[
     }, { merge: true });
 }
 
+/**
+ * Settles all pending bets for a finalized mock NFL game for one user.
+ * This reuses the existing settleBet() path so wallet + win/loss + history
+ * stay consistent with normal markets.
+ */
+export async function settleUserMockNflGameBets(
+    uid: string,
+    game: MockNflGameState,
+): Promise<void> {
+    if (!uid) return;
+    if (game.status !== "FINAL") return;
+    if (game.awayScore == null || game.homeScore == null) return;
+
+    const marketId = `mock-${game.id}`;
+    const pending = (await getBets(uid)).filter(
+        (b) => b.marketId === marketId && (b.status ?? "PENDING") === "PENDING",
+    );
+    if (pending.length === 0) return;
+
+    const awayTeam = game.awayTeam;
+    const homeTeam = game.homeTeam;
+    const awaySpreadLabel = `${awayTeam} ${game.spreadLine > 0 ? `+${game.spreadLine.toFixed(1)}` : game.spreadLine.toFixed(1)}`;
+    const homeSpread = -game.spreadLine;
+    const homeSpreadLabel = `${homeTeam} ${homeSpread > 0 ? `+${homeSpread.toFixed(1)}` : homeSpread.toFixed(1)}`;
+    const overLabel = `Over ${game.totalLine.toFixed(1)}`;
+    const underLabel = `Under ${game.totalLine.toFixed(1)}`;
+    const margin = game.awayScore - game.homeScore;
+    const totalScore = game.awayScore + game.homeScore;
+
+    const outcomeFor = (optionLabel: string): "WON" | "LOST" | "VOID" => {
+        const selected = optionLabel.trim();
+
+        // Moneyline
+        if (selected === awayTeam) {
+            if (game.awayScore === game.homeScore) return "VOID";
+            return game.awayScore > game.homeScore ? "WON" : "LOST";
+        }
+        if (selected === homeTeam) {
+            if (game.awayScore === game.homeScore) return "VOID";
+            return game.homeScore > game.awayScore ? "WON" : "LOST";
+        }
+
+        // Spread
+        if (selected === awaySpreadLabel) {
+            const result = margin + game.spreadLine;
+            if (result === 0) return "VOID";
+            return result > 0 ? "WON" : "LOST";
+        }
+        if (selected === homeSpreadLabel) {
+            const result = -margin - game.spreadLine;
+            if (result === 0) return "VOID";
+            return result > 0 ? "WON" : "LOST";
+        }
+
+        // Totals
+        if (selected === overLabel) {
+            if (totalScore === game.totalLine) return "VOID";
+            return totalScore > game.totalLine ? "WON" : "LOST";
+        }
+        if (selected === underLabel) {
+            if (totalScore === game.totalLine) return "VOID";
+            return totalScore < game.totalLine ? "WON" : "LOST";
+        }
+
+        // Unknown/legacy label for this mock market: void it safely.
+        return "VOID";
+    };
+
+    await Promise.all(
+        pending.map(async (bet) => {
+            await settleBet(bet, outcomeFor(bet.optionLabel));
+        }),
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────
 //  BETTING
 // ─────────────────────────────────────────────────────────────────
@@ -754,6 +829,70 @@ export async function getBets(uid: string): Promise<Bet[]> {
     });
 
     return betList;
+}
+
+/**
+ * Realtime subscription for one user's bets.
+ * Keeps local UI state in sync when bets are settled/updated server-side.
+ */
+export function subscribeToUserBets(
+    uid: string,
+    onUpdate: (bets: Bet[]) => void,
+    onError?: (err: Error) => void,
+): () => void {
+    if (!uid) {
+        onUpdate([]);
+        return () => {};
+    }
+
+    const q = query(collection(db, "bets"), where("userID", "==", uid));
+
+    return onSnapshot(
+        q,
+        (snapshot) => {
+            const betList: Bet[] = [];
+            snapshot.forEach((d) => {
+                const data = d.data();
+                const validBet: Bet = {
+                    id:              d.id,
+                    userID:          data.userID,
+                    marketId:        data.marketId,
+                    marketTitle:     data.marketTitle,
+                    optionLabel:     data.optionLabel,
+                    betType:         data.betType === "parlay" ? "parlay" : "single",
+                    stake:           data.stake,
+                    odds:            data.odds,
+                    potentialPayout: data.potentialPayout,
+                    placedAt:        data.placedAt?.toDate?.() ?? new Date(),
+                    legCount:        data.legCount ?? 1,
+                    parlayLegs: Array.isArray(data.parlayLegs)
+                        ? data.parlayLegs.map((leg: any): ParlayLeg => ({
+                            marketId:    String(leg.marketId    ?? ""),
+                            marketTitle: String(leg.marketTitle ?? ""),
+                            sportKey:    String(leg.sportKey    ?? ""),
+                            optionId:    String(leg.optionId    ?? ""),
+                            optionLabel: String(leg.optionLabel ?? ""),
+                            odds:        Number(leg.odds)        || 0,
+                            marketKey:   String(leg.marketKey   ?? "h2h"),
+                            result:      leg.result ?? "PENDING",
+                        }))
+                        : [],
+                    status:        (data.status   ?? "PENDING") as BetStatus,
+                    eventId:       data.eventId,
+                    sportKey:      data.sportKey,
+                    eventStartsAt: data.eventStartsAt?.toDate?.(),
+                    settledAt:     data.settledAt?.toDate?.(),
+                };
+                betList.push(validBet);
+            });
+            betList.sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime());
+            onUpdate(betList);
+        },
+        (err) => {
+            if (onError) onError(err);
+            else console.error("subscribeToUserBets failed", err);
+        },
+    );
 }
 
 /**

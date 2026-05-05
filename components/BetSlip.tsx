@@ -35,6 +35,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
 
   const isSinglesEmpty = !selection;
   const isParlayEmpty = parlaySelections.length === 0;
+  const hasMinimumParlayLegs = parlaySelections.length >= 2;
   const stake = Number(stakeInput) || 0;
   const potentialPayout = selection ? stake * selection.option.odds : 0;
   const parlayPotentialPayout = stake * (parlaySelections.length ? parlaySelections.reduce((a, s) => a * s.option.odds, 1) : 0);
@@ -138,7 +139,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
 
   const hasAnyPick = !isSinglesEmpty || !isParlayEmpty;
   const singlesPlaceDisabled = isSinglesEmpty || !isAffordable || stake <= 0 || !!limitError;
-  const parlayPlaceDisabled  = isParlayEmpty  || !isAffordable || stake <= 0 || !!limitError;
+  const parlayPlaceDisabled  = !hasMinimumParlayLegs || !isAffordable || stake <= 0 || !!limitError;
   const tabLabels: Record<SlipTab, string> = { SINGLES: 'Singles', PARLAYS: 'Parlays' };
 
   const cardClass = 'rounded-xl border border-slate-800 bg-[#100d1f]';
@@ -395,6 +396,9 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                   <LimitBanner />
                   {!isAffordable && (
                       <p className="text-red-400 text-[10px] mt-2 font-semibold">Insufficient funds</p>
+                  )}
+                  {!hasMinimumParlayLegs && (
+                      <p className="text-amber-300 text-[10px] mt-2 font-semibold">Add at least 2 legs to place a parlay.</p>
                   )}
                   <button
                       type="button"
