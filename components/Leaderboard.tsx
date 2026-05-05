@@ -50,8 +50,6 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
     return [...entries].sort(cmp);
   }, [entries, sortKey, sortDir]);
 
-  const isCanonicalRankOrder = sortKey === 'rank' && sortDir === 'asc';
-
   const SortHeader: React.FC<{
     label: string;
     colKey: SortKey;
@@ -119,7 +117,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
               </tr>
             ) : (
             sortedEntries.map((entry, idx) => {
-              const displayRank = isCanonicalRankOrder ? entry.rank : idx + 1;
+              const displayRank = sortKey === 'rank' ? entry.rank : idx + 1;
               return (
               <tr 
                 key={entry.id} 
