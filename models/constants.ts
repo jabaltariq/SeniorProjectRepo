@@ -11,6 +11,26 @@ export const SPORT_TABS = ['ALL', 'Football', 'Basketball', 'Baseball', 'Hockey'
 /** Show “View All Games” only when the board already lists this many rows (avoids clutter for normal boards). */
 export const VIEW_ALL_GAMES_VISIBLE_THRESHOLD = 60;
 
+export const MOCK_NFL_TEAM_POOL = [
+  'Steelers',
+  'Eagles',
+  'Rams',
+  'Chiefs',
+  '49ers',
+  'Seahawks',
+  'Patriots',
+  'Bills',
+  'Broncos',
+  'Chargers',
+  'Lions',
+  'Bears',
+  'Ravens',
+  'Buccaneers',
+  'Commanders',
+  'Texans',
+  'Jaguars',
+] as const;
+
 export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCcgJVGV0L95RkcRZ-jqzFAepr3N73wewQ",
   authDomain: "seniorproject-ce9fe.firebaseapp.com",

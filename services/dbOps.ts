@@ -480,6 +480,74 @@ export async function setSpendingLimits(
 
 
 // ─────────────────────────────────────────────────────────────────
+//  MOCK NFL GAMES (PER USER)
+// ─────────────────────────────────────────────────────────────────
+
+export type MockNflWinner = "HOME" | "AWAY" | null;
+
+export interface MockNflGameState {
+    id: string;
+    week: number;
+    awayTeam: string;
+    homeTeam: string;
+    awayOdds: number;
+    homeOdds: number;
+    totalOverOdds: number;
+    totalUnderOdds: number;
+    spreadLine: number;
+    totalLine: number;
+    status: "UPCOMING" | "FINAL";
+    awayScore: number | null;
+    homeScore: number | null;
+    winner: MockNflWinner;
+    updatedAtMs: number;
+}
+
+export async function getUserMockNflGames(uid: string): Promise<MockNflGameState[]> {
+    if (!uid) return [];
+    const snap = await getDoc(doc(db, "userInfo", uid));
+    if (!snap.exists()) return [];
+    const data = snap.data();
+    const raw = data["mockNflGames"];
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+        .map((row: any): MockNflGameState | null => {
+            if (!row || typeof row !== "object") return null;
+            const id = String(row.id ?? "");
+            const awayTeam = String(row.awayTeam ?? "");
+            const homeTeam = String(row.homeTeam ?? "");
+            if (!id || !awayTeam || !homeTeam) return null;
+            return {
+                id,
+                week: Math.min(18, Math.max(1, Number(row.week) || 1)),
+                awayTeam,
+                homeTeam,
+                awayOdds: Number(row.awayOdds) || 1.91,
+                homeOdds: Number(row.homeOdds) || 1.91,
+                totalOverOdds: Number(row.totalOverOdds) || 1.91,
+                totalUnderOdds: Number(row.totalUnderOdds) || 1.91,
+                spreadLine: Number(row.spreadLine) || 0,
+                totalLine: Number(row.totalLine) || 44.5,
+                status: row.status === "FINAL" ? "FINAL" : "UPCOMING",
+                awayScore: row.awayScore == null ? null : Number(row.awayScore) || 0,
+                homeScore: row.homeScore == null ? null : Number(row.homeScore) || 0,
+                winner: row.winner === "HOME" || row.winner === "AWAY" ? row.winner : null,
+                updatedAtMs: Number(row.updatedAtMs) || Date.now(),
+            };
+        })
+        .filter((row: MockNflGameState | null): row is MockNflGameState => row !== null);
+}
+
+export async function saveUserMockNflGames(uid: string, games: MockNflGameState[]): Promise<void> {
+    if (!uid) return;
+    await setDoc(doc(db, "userInfo", uid), {
+        mockNflGames: games,
+        mockNflUpdatedAt: Timestamp.now(),
+    }, { merge: true });
+}
+
+// ─────────────────────────────────────────────────────────────────
 //  BETTING
 // ─────────────────────────────────────────────────────────────────
 
