@@ -5,9 +5,9 @@ import {
   placeSingleBet,
   changeUserMoney,
   claimedDaily,
-  getBets,
   getUserMoney,
-  addBet, listenForChange,
+  listenForChange,
+  subscribeToUserBets,
 } from '@/services/dbOps';
 import { BoostType } from '@/services/dbOps';
 
@@ -49,15 +49,22 @@ export function useBettingViewModel() {
         setBalance(money);
       }
     });
-    getBets(uid).then((bets) => {
-      setActiveBets(bets);
-    }).catch(() => undefined);
+    const unsubBets = subscribeToUserBets(
+      uid,
+      (bets) => setActiveBets(bets),
+      () => undefined,
+    );
 
 
-    return listenForChange(uid, ({ money, hasDailyBonus }) => {
+    const unsubUserInfo = listenForChange(uid, ({ money, hasDailyBonus }) => {
       setBalance(money);
       setDailyBonusAvailable(hasDailyBonus);
     });
+
+    return () => {
+      unsubBets();
+      unsubUserInfo();
+    };
   }, [localStorage.getItem("userEmail")]);
 
   /**
@@ -73,6 +80,23 @@ export function useBettingViewModel() {
   ) => {
     console.log('handlePlaceBet called, activeBoost:', activeBoost);
     if (!betSelection || isPlacingBet) return;
+
+    // Defensive lock: mock markets are bettable only while UPCOMING.
+    // If a mock game finalized after selection but before checkout, remove it.
+    const isClosedMock = (m: Market) => m.sport_key === 'football_nfl_mock' && m.status === 'CLOSED';
+    if (isClosedMock(betSelection.market)) {
+      setParlaySelections((prev) =>
+        prev.filter((sel) => `${sel.market.id}:${sel.option.id}` !== `${betSelection.market.id}:${betSelection.option.id}`)
+      );
+      setBetSelection(null);
+      return;
+    }
+    const staleParlayMockLegs = parlaySelections.filter((sel) => isClosedMock(sel.market));
+    if (staleParlayMockLegs.length > 0) {
+      setParlaySelections((prev) => prev.filter((sel) => !isClosedMock(sel.market)));
+      if (isClosedMock(betSelection.market)) setBetSelection(null);
+      return;
+    }
 
     const uid = localStorage.getItem('uid');
     if (!uid) return;

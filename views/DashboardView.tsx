@@ -23,7 +23,7 @@ import {
   LayoutGrid,
   CircleDot,
 } from 'lucide-react';
-import type { Market, MarketOption, Bet } from '../models';
+import { MarketType, type Market, type MarketOption, type Bet } from '../models';
 import { BetSlip } from '../components/BetSlip';
 import { Leaderboard } from '../components/Leaderboard';
 import { SocialView } from '../components/SocialView';
@@ -38,8 +38,9 @@ import { StoreView } from './StoreView';
 import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
-import { DAILY_BONUS_AMOUNT, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
-import {FriendRequest, getBets, getUserMoney, listenForChange} from "@/services/dbOps.ts";
+import { DAILY_BONUS_AMOUNT, MOCK_NFL_TEAM_POOL, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
+import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForChange, saveUserMockNflGames, settleUserMockNflGameBets } from "@/services/dbOps.ts";
+import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
 
@@ -168,11 +169,152 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const view = pathToView(location.pathname);
   const isLightMode = themeMode === 'light';
   const [promotionsOpen, setPromotionsOpen] = useState(false);
+  const [mockNflGames, setMockNflGames] = useState<MockNflGameState[]>([]);
+
+  const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
     document.documentElement.dataset.theme = isLightMode ? 'light' : 'ocean';
   }, [isLightMode]);
+
+  const normalizeSpreadLine = (line: number) => (line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1));
+  const pickRandom = <T,>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
+  const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
+  const decimalOdds = () => Number(randomBetween(1.72, 2.25).toFixed(2));
+  const randomWeek = () => Math.floor(randomBetween(1, 19));
+
+  const makeMockGame = (idPrefix: string, previous?: MockNflGameState): MockNflGameState => {
+    const teamPool = MOCK_NFL_TEAM_POOL;
+    const shouldFlip = Boolean(previous) && Math.random() < 0.5;
+    const awayTeam = shouldFlip && previous ? previous.homeTeam : pickRandom(teamPool);
+    let homeTeam = shouldFlip && previous ? previous.awayTeam : pickRandom(teamPool);
+    let guard = 0;
+    while (homeTeam === awayTeam && guard < 10) {
+      homeTeam = pickRandom(teamPool);
+      guard += 1;
+    }
+
+    const spreadMag = Number(randomBetween(1.5, 7.5).toFixed(1));
+    const awayFavored = Math.random() < 0.5;
+    const spreadLine = awayFavored ? -spreadMag : spreadMag;
+    return {
+      id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      week: randomWeek(),
+      awayTeam,
+      homeTeam,
+      awayOdds: decimalOdds(),
+      homeOdds: decimalOdds(),
+      totalOverOdds: decimalOdds(),
+      totalUnderOdds: decimalOdds(),
+      spreadLine,
+      totalLine: Number(randomBetween(39.5, 53.5).toFixed(1)),
+      status: 'UPCOMING',
+      awayScore: null,
+      homeScore: null,
+      winner: null,
+      updatedAtMs: Date.now(),
+    };
+  };
+
+  const ensureMockBoard = (existing: MockNflGameState[]): MockNflGameState[] => {
+    const upcoming = existing.filter((g) => g.status !== 'FINAL');
+    const seeded = [...upcoming];
+    while (seeded.length < 3) {
+      seeded.push(makeMockGame('mock-nfl', seeded[seeded.length - 1]));
+    }
+    return seeded.slice(0, 3);
+  };
+
+  useEffect(() => {
+    if (!userUid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = await getUserMockNflGames(userUid);
+        if (cancelled) return;
+        const board = ensureMockBoard(stored);
+        setMockNflGames(board);
+        await saveUserMockNflGames(userUid, board);
+      } catch (err) {
+        console.error('Failed to load mock NFL games', err);
+        if (cancelled) return;
+        const board = ensureMockBoard([]);
+        setMockNflGames(board);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userUid]);
+
+  const simulateMockGame = async (gameId: string, mode: 'RANDOM' | 'AWAY' | 'HOME') => {
+    let finalizedGame: MockNflGameState | null = null;
+    const next = mockNflGames.map((g) => {
+      if (g.id !== gameId) return g;
+      const awayBase = Math.floor(randomBetween(7, 38));
+      const homeBase = Math.floor(randomBetween(7, 38));
+      let awayScore = awayBase;
+      let homeScore = homeBase;
+      if (mode === 'AWAY') {
+        awayScore = Math.max(awayBase, homeBase + 1);
+      } else if (mode === 'HOME') {
+        homeScore = Math.max(homeBase, awayBase + 1);
+      } else if (awayScore === homeScore) {
+        homeScore += 1;
+      }
+      const winner = awayScore > homeScore ? 'AWAY' : 'HOME';
+      const finalized = {
+        ...g,
+        status: 'FINAL' as const,
+        awayScore,
+        homeScore,
+        winner,
+        updatedAtMs: Date.now(),
+      };
+      finalizedGame = finalized;
+      return finalized;
+    });
+    setMockNflGames(next);
+    if (userUid) {
+      await saveUserMockNflGames(userUid, next);
+      if (finalizedGame) {
+        await settleUserMockNflGameBets(userUid, finalizedGame);
+      }
+    }
+  };
+
+  const createNewMockGame = async (gameId: string) => {
+    const next = mockNflGames.map((g) => {
+      if (g.id !== gameId) return g;
+      return makeMockGame('mock-nfl', g);
+    });
+    setMockNflGames(next);
+    if (userUid) {
+      await saveUserMockNflGames(userUid, next);
+    }
+  };
+
+  useEffect(() => {
+    if (mockNflGames.length === 0) return;
+    const finalizedMockMarketIds = new Set(
+      mockNflGames
+        .filter((g) => g.status === 'FINAL')
+        .map((g) => `mock-${g.id}`),
+    );
+    if (finalizedMockMarketIds.size === 0) return;
+
+    // Remove any finalized mock legs from active selection state so users
+    // cannot place singles/parlays on games that already ended.
+    const staleSelections = parlaySelections.filter((sel) => finalizedMockMarketIds.has(sel.market.id));
+    for (const stale of staleSelections) {
+      onSelectBet(stale.market, stale.option);
+    }
+
+    if (betSelection && finalizedMockMarketIds.has(betSelection.market.id)) {
+      onSelectBet(betSelection.market, betSelection.option);
+    }
+  }, [mockNflGames, parlaySelections, betSelection, onSelectBet]);
 
   // ── Boost state — lives here so BetSlip and BoostsCard share it ─
   const [activeBoost, setActiveBoost] = useState<BoostType | null>(null);
@@ -204,6 +346,72 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       return { label: `Started ${time}`, tone: 'live' as const };
     }
     return { label: time, tone: 'upcoming' as const };
+  };
+
+  const mockMarketForGame = (game: MockNflGameState): Market => ({
+    id: `mock-${game.id}`,
+    sport_key: 'football_nfl_mock',
+    title: `${game.awayTeam} @ ${game.homeTeam}`,
+    subtitle: 'NFL',
+    category: 'Football',
+    type: MarketType.SPORTS,
+    startTime: new Date(game.updatedAtMs).toISOString(),
+    status: game.status === 'FINAL' ? 'CLOSED' : 'UPCOMING',
+    options: [
+      { id: `${game.id}-spread-away`, label: `${game.awayTeam} ${normalizeSpreadLine(game.spreadLine)}`, odds: game.awayOdds, marketKey: 'spreads' },
+      { id: `${game.id}-spread-home`, label: `${game.homeTeam} ${normalizeSpreadLine(-game.spreadLine)}`, odds: game.homeOdds, marketKey: 'spreads' },
+      { id: `${game.id}-total-over`, label: `Over ${game.totalLine.toFixed(1)}`, odds: game.totalOverOdds, marketKey: 'totals' },
+      { id: `${game.id}-total-under`, label: `Under ${game.totalLine.toFixed(1)}`, odds: game.totalUnderOdds, marketKey: 'totals' },
+      { id: `${game.id}-ml-away`, label: game.awayTeam, odds: game.awayOdds, marketKey: 'h2h' },
+      { id: `${game.id}-ml-home`, label: game.homeTeam, odds: game.homeOdds, marketKey: 'h2h' },
+    ],
+  });
+
+  const isMockOptionSelected = (gameId: string, optionId: string) =>
+    parlaySelections.some((sel) => sel.market.id === `mock-${gameId}` && sel.option.id === optionId);
+
+  const getLatestUserMockBet = (gameId: string): Bet | null => {
+    const marketId = `mock-${gameId}`;
+    const matching = props.activeBets.filter((b) => b.marketId === marketId && (b.betType ?? 'single') === 'single');
+    if (matching.length === 0) return null;
+    const sorted = [...matching].sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime());
+    return sorted[0] ?? null;
+  };
+
+  const resolveMockBetOutcome = (game: MockNflGameState): 'WON' | 'LOST' | 'PUSH' | 'NONE' => {
+    if (game.status !== 'FINAL' || game.awayScore == null || game.homeScore == null) return 'NONE';
+    const bet = getLatestUserMockBet(game.id);
+    if (!bet) return 'NONE';
+
+    const awaySpreadLabel = `${game.awayTeam} ${normalizeSpreadLine(game.spreadLine)}`;
+    const homeSpreadLabel = `${game.homeTeam} ${normalizeSpreadLine(-game.spreadLine)}`;
+    const overLabel = `Over ${game.totalLine.toFixed(1)}`;
+    const underLabel = `Under ${game.totalLine.toFixed(1)}`;
+    const margin = game.awayScore - game.homeScore;
+    const totalScore = game.awayScore + game.homeScore;
+    const selected = bet.optionLabel.trim();
+
+    if (selected === game.awayTeam) return game.awayScore > game.homeScore ? 'WON' : 'LOST';
+    if (selected === game.homeTeam) return game.homeScore > game.awayScore ? 'WON' : 'LOST';
+    if (selected === awaySpreadLabel) {
+      const spreadResult = margin + game.spreadLine;
+      if (spreadResult === 0) return 'PUSH';
+      return spreadResult > 0 ? 'WON' : 'LOST';
+    }
+    if (selected === homeSpreadLabel) {
+      const spreadResult = -margin - game.spreadLine;
+      if (spreadResult === 0) return 'PUSH';
+      return spreadResult > 0 ? 'WON' : 'LOST';
+    }
+    if (selected === overLabel) {
+      if (totalScore === game.totalLine) return 'PUSH';
+      return totalScore > game.totalLine ? 'WON' : 'LOST';
+    }
+    if (selected === underLabel) {
+      if (totalScore === game.totalLine) return 'PUSH';
+      return totalScore < game.totalLine ? 'WON' : 'LOST';
+    }
+    return 'NONE';
   };
 
   /** Small league tiles in the sidebar; falls back to initials when unknown. */
@@ -297,8 +505,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       const key = `${m.category}||${m.subtitle}`;
       if (!seen.has(key)) seen.set(key, { league: m.subtitle, sport: m.category });
     }
-    return Array.from(seen.values()).sort((a, b) => a.league.localeCompare(b.league));
+    const rows = Array.from(seen.values()).sort((a, b) => a.league.localeCompare(b.league));
+    const hasNflRow = rows.some((r) => r.sport === 'Football' && r.league.toLowerCase() === 'nfl');
+    if (sportFilter === 'Football' && !hasNflRow) {
+      rows.unshift({ sport: 'Football', league: 'NFL' });
+    }
+    return rows;
   })();
+  const footballApiLeagues = leagueNavRows.filter((r) => r.sport === 'Football' && r.league.toLowerCase() !== 'nfl');
 
   const safeBalance = Number.isFinite(balance) ? balance : 0;
   const displayBalance = `$${Math.max(0, safeBalance).toFixed(2)}`;
@@ -416,6 +630,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         );
       case 'MARKETS':
       default:
+        const showMockNflBoard = sportFilter === 'Football' && leagueFilter.toLowerCase() === 'nfl';
+        const showApiMarketsTable = !(sportFilter === 'Football' && leagueFilter.toLowerCase() === 'nfl');
+        const showLoadingState = loading && !showMockNflBoard;
+        const showErrorState = Boolean(error) && !showMockNflBoard;
         return (
             <>
               <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)] gap-5">
@@ -434,7 +652,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         <button
                             key={`tile-${tab}`}
                             type="button"
-                            onClick={() => onSportFilter(tab)}
+                            onClick={() => {
+                              if (tab === 'Football') {
+                                onSelectLeagueInSport('Football', 'NFL');
+                                return;
+                              }
+                              onSportFilter(tab);
+                            }}
                             title={tab}
                             className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
                                 sportPrimarySelected
@@ -571,7 +795,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               .map((tab) => (
                                   <button
                                       key={`trend-tab-${tab}`}
-                                      onClick={() => onSportFilter(tab)}
+                                      onClick={() => {
+                                        if (tab === 'Football') {
+                                          onSelectLeagueInSport('Football', 'NFL');
+                                          return;
+                                        }
+                                        onSportFilter(tab);
+                                      }}
                                       className={`shrink-0 inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition-all ${
                                           sportFilter === tab
                                               ? 'border-violet-400/80 bg-violet-500/20 text-violet-200'
@@ -604,12 +834,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           Pick a sport tab in the sidebar or trending row. We only fetch odds after you select a filter.
                         </p>
                       </div>
-                  ) : loading ? (
+                  ) : showLoadingState ? (
                       <div className="flex flex-col items-center justify-center py-20 gap-4">
                         <Loader2 className="text-blue-400 animate-spin" size={48} />
                         <p className="text-slate-400">Loading live odds...</p>
                       </div>
-                  ) : error ? (
+                  ) : showErrorState ? (
                       <div className="glass-card rounded-2xl p-8 text-center border-red-500/20">
                         <AlertCircle className="mx-auto text-red-400 mb-4" size={48} />
                         <h3 className="text-xl font-bold text-slate-200 mb-2">Couldn&apos;t load odds</h3>
@@ -625,6 +855,205 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                       </div>
                   ) : (
                       <div className="overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/35">
+                        {showMockNflBoard && (
+                          <div className="border-b border-slate-800/90 bg-gradient-to-r from-amber-500/10 via-slate-900/80 to-amber-500/10 px-4 py-3">
+                            <div className="mb-3 flex items-center justify-between">
+                              <div className="inline-flex items-center gap-2">
+                                <span className="inline-flex rounded-full border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-200">
+                                  Mock NFL
+                                </span>
+                                <span className="text-xs text-slate-300">Simulate outcomes and place test bets</span>
+                              </div>
+                            </div>
+                            {footballApiLeagues.length > 0 && (
+                              <div className="mb-3 rounded-md border border-slate-700/80 bg-slate-900/70 px-2.5 py-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">NCAA Football (API)</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {footballApiLeagues.slice(0, 4).map((row) => (
+                                    <button
+                                      key={`ncaa-widget-${row.league}`}
+                                      type="button"
+                                      onClick={() => onSelectLeagueInSport('Football', row.league)}
+                                      className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:border-blue-500/70 hover:text-blue-200"
+                                    >
+                                      {row.league}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div className="space-y-2">
+                              {mockNflGames.map((game) => (
+                                <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
+                                  {(() => {
+                                    const mockMarket = mockMarketForGame(game);
+                                    const spreadAway = mockMarket.options[0];
+                                    const spreadHome = mockMarket.options[1];
+                                    const totalOver = mockMarket.options[2];
+                                    const totalUnder = mockMarket.options[3];
+                                    const mlAway = mockMarket.options[4];
+                                    const mlHome = mockMarket.options[5];
+                                    const bettable = game.status !== 'FINAL';
+                                    const mockBetOutcome = resolveMockBetOutcome(game);
+                                    const latestMockBet = getLatestUserMockBet(game.id);
+                                    const finalCardTone =
+                                      mockBetOutcome === 'WON'
+                                        ? 'border-emerald-500/30 bg-emerald-500/10'
+                                        : mockBetOutcome === 'LOST'
+                                          ? 'border-red-500/30 bg-red-500/10'
+                                          : 'border-slate-700/90 bg-slate-900/95';
+                                    const finalTextTone =
+                                      mockBetOutcome === 'WON'
+                                        ? 'text-emerald-300'
+                                        : mockBetOutcome === 'LOST'
+                                          ? 'text-red-300'
+                                          : 'text-slate-300';
+                                    return (
+                                      <>
+                                  <div className="pr-2">
+                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">NFL • Week {game.week}</p>
+                                    <div className="mt-1 space-y-0.5">
+                                      <p className="text-sm font-semibold text-amber-300">
+                                        {game.awayTeam} <span className="text-amber-200/80">@</span> {game.homeTeam}
+                                      </p>
+                                      {game.status === 'FINAL' && (
+                                        <p className="text-[12px] text-slate-300">
+                                          <span className={game.winner === 'AWAY' ? 'font-semibold text-emerald-300' : 'text-slate-400'}>
+                                            {game.awayTeam} {game.awayScore}
+                                          </span>
+                                          <span className="mx-1.5 text-slate-500">|</span>
+                                          <span className={game.winner === 'HOME' ? 'font-semibold text-emerald-300' : 'text-slate-400'}>
+                                            {game.homeTeam} {game.homeScore}
+                                          </span>
+                                        </p>
+                                      )}
+                                    </div>
+                                    <p className="mt-2 text-[11px] text-slate-400">
+                                      Odds {game.awayOdds.toFixed(2)} / {game.homeOdds.toFixed(2)}
+                                    </p>
+                                    <div className="mt-2 space-y-1">
+                                      {game.status === 'FINAL' ? (
+                                        <>
+                                          <div className={`rounded-md border px-2 py-1.5 text-[10px] ${finalCardTone}`}>
+                                            <p className={`font-bold uppercase tracking-wider ${finalTextTone}`}>
+                                              Final
+                                              {mockBetOutcome !== 'NONE' ? ` • ${mockBetOutcome}` : ''}
+                                            </p>
+                                            <p className={finalTextTone}>{game.awayScore} - {game.homeScore}</p>
+                                            <p className={`font-semibold ${finalTextTone}`}>
+                                              Winner: {game.winner === 'AWAY' ? game.awayTeam : game.homeTeam}
+                                            </p>
+                                            {latestMockBet && (
+                                              <p className={`mt-1 ${finalTextTone}`}>
+                                                Spent: ${latestMockBet.stake.toFixed(2)} • To win: ${latestMockBet.potentialPayout.toFixed(2)}
+                                              </p>
+                                            )}
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => void createNewMockGame(game.id)}
+                                            className="w-full rounded-md border border-emerald-400/50 bg-emerald-500/20 px-2 py-1.5 text-[10px] font-semibold text-emerald-100 hover:bg-emerald-500/30"
+                                          >
+                                            Create New Game
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <div className="grid grid-cols-3 gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => void simulateMockGame(game.id, 'RANDOM')}
+                                            className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:border-amber-400/70 hover:text-amber-200"
+                                          >
+                                            Random
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => void simulateMockGame(game.id, 'AWAY')}
+                                            className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:border-amber-400/70 hover:text-amber-200"
+                                          >
+                                            Away Win
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => void simulateMockGame(game.id, 'HOME')}
+                                            className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:border-amber-400/70 hover:text-amber-200"
+                                          >
+                                            Home Win
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col justify-center gap-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-center">Spread</p>
+                                    {[spreadAway, spreadHome].map((opt) => (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        disabled={!bettable}
+                                        onClick={() => onSelectBet(mockMarket, opt)}
+                                        className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
+                                          isMockOptionSelected(game.id, opt.id)
+                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                        } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
+                                      >
+                                        <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
+                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  <div className="flex flex-col justify-center gap-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-center">Total</p>
+                                    {[totalOver, totalUnder].map((opt) => (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        disabled={!bettable}
+                                        onClick={() => onSelectBet(mockMarket, opt)}
+                                        className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
+                                          isMockOptionSelected(game.id, opt.id)
+                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                        } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
+                                      >
+                                        <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
+                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  <div className="flex flex-col justify-center gap-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-center">Winner</p>
+                                    {[mlAway, mlHome].map((opt) => (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        disabled={!bettable}
+                                        onClick={() => onSelectBet(mockMarket, opt)}
+                                        className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
+                                          isMockOptionSelected(game.id, opt.id)
+                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                        } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
+                                      >
+                                        <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
+                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                      </button>
+                                    ))}
+                                  </div>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {showApiMarketsTable && (
+                          <>
                         <div className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] bg-slate-900/75 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                           <div>Game</div>
                           <div className="text-center">Spread</div>
@@ -671,8 +1100,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         <span>{market.subtitle}</span>
                                       </p>
                                       <div className="space-y-1">
-                                        <p className="text-sm font-semibold text-slate-100 leading-tight">{teams.away}</p>
-                                        <p className="text-sm font-semibold text-slate-200 leading-tight">{teams.home}</p>
+                                        <p className="text-sm font-semibold text-slate-100 leading-tight">
+                                          {teams.away} <span className="text-slate-400">@</span> {teams.home}
+                                        </p>
                                       </div>
                                     </div>
 
@@ -721,6 +1151,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       : `No ${sportFilter} games at the moment. Try another sport.`}
                               </p>
                             </div>
+                        )}
+                          </>
                         )}
                       </div>
                   )}
