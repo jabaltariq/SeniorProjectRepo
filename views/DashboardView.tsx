@@ -43,6 +43,7 @@ import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForCha
 import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
+import { computeParlayRollup } from '@/services/parlayRollup';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
 
@@ -591,39 +592,59 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </h2>
               <div className="space-y-4">
                 {props.activeBets.length > 0 ? (
-                    props.activeBets.map(bet => (
-                        <div key={bet.id} className="glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all">
+                    props.activeBets.map(bet => {
+                      const s = (bet.status ?? 'PENDING').toLowerCase();
+                      // Compute the actual amount returned to the wallet so reduced
+                      // parlays don't overstate. Singles always pay potentialPayout
+                      // when WON; parlays may have pushed legs and pay less.
+                      const effectivePayout = (() => {
+                        if (s === 'won' && bet.betType === 'parlay' && bet.parlayLegs?.length) {
+                          const r = computeParlayRollup(bet.parlayLegs, bet.stake);
+                          if (r.state === 'WON') return r.payout;
+                        }
+                        return bet.potentialPayout;
+                      })();
+                      // Red/green/amber widget styling, applied to the entire row
+                      // (left border + tinted gradient) so settled outcomes are
+                      // scannable at a glance, not just via the small status pill.
+                      const rowAccent =
+                        s === 'won'                            ? 'border-l-4 border-l-emerald-500' :
+                        s === 'lost'                           ? 'border-l-4 border-l-red-500' :
+                        s === 'push'                           ? 'border-l-4 border-l-amber-500' :
+                        (s === 'void' || s === 'cancelled')    ? 'border-l-4 border-l-slate-500' :
+                                                                 '';
+                      const pillTone =
+                        s === 'won'                            ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                        s === 'lost'                           ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        s === 'push'                           ? 'bg-amber-500/10 text-amber-300 border-amber-500/20' :
+                        (s === 'void' || s === 'cancelled')    ? 'bg-slate-500/10 text-slate-300 border-slate-500/20' :
+                                                                 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+                      const pillLabel =
+                        s === 'won'       ? 'Won' :
+                        s === 'lost'      ? 'Lost' :
+                        s === 'push'      ? 'Push' :
+                        s === 'void'      ? 'Void' :
+                        s === 'cancelled' ? 'Cancelled' :
+                                            'Pending';
+                      // Right-side payout block changes meaning by status. Free bet
+                      // claims and stake-refund cases are surfaced here too.
+                      const payoutBlock =
+                        s === 'won'                          ? { label: 'Payout',           value: `$${effectivePayout.toLocaleString()}`,   color: 'text-emerald-400' } :
+                        s === 'lost'                         ? { label: 'Lost',             value: `-$${bet.stake.toLocaleString()}`,        color: 'text-red-400' } :
+                        s === 'push'                         ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-amber-300' } :
+                        (s === 'void' || s === 'cancelled')  ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-slate-300' } :
+                                                               { label: 'Potential Payout', value: `$${bet.potentialPayout.toLocaleString()}`, color: 'text-blue-400' };
+                      return (
+                        <div key={bet.id} className={`glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all ${rowAccent}`}>
                           <div className="flex justify-between items-start mb-4">
                             <div>
                               <p className="text-xs font-bold text-slate-500 uppercase mb-1">{bet.marketTitle}</p>
                               <h4 className="text-lg font-bold">Selected: {bet.optionLabel}</h4>
                               <p className="text-xs text-slate-500 mt-1">{bet.placedAt.toLocaleString()}</p>
                             </div>
-                            {(() => {
-                              const s = (bet.status ?? 'PENDING').toLowerCase();
-                              const tone =
-                                s === 'won'
-                                  ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                                  : s === 'lost'
-                                    ? 'bg-red-500/10 text-red-400 border-red-500/20'
-                                    : s === 'push'
-                                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                                      : s === 'void' || s === 'cancelled'
-                                        ? 'bg-slate-500/10 text-slate-300 border-slate-500/20'
-                                        : 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-                              const label =
-                                s === 'won'       ? 'Won' :
-                                s === 'lost'      ? 'Lost' :
-                                s === 'push'      ? 'Push' :
-                                s === 'void'      ? 'Void' :
-                                s === 'cancelled' ? 'Cancelled' :
-                                                    'Pending';
-                              return (
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${tone}`}>
-                                  {label}
-                                </span>
-                              );
-                            })()}
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${pillTone}`}>
+                              {pillLabel}
+                            </span>
                           </div>
                           <div className="flex justify-between items-end border-t border-slate-800 pt-4">
                             <div className="grid grid-cols-2 gap-8">
@@ -637,12 +658,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className="text-[10px] font-bold text-slate-500 uppercase">Potential Payout</p>
-                              <p className="text-xl font-black text-blue-400">${bet.potentialPayout.toLocaleString()}</p>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase">{payoutBlock.label}</p>
+                              <p className={`text-xl font-black ${payoutBlock.color}`}>{payoutBlock.value}</p>
                             </div>
                           </div>
                         </div>
-                    ))
+                      );
+                    })
                 ) : (
                     <div className="py-20 text-center glass-card rounded-2xl border-dashed">
                       <Gamepad2 className="mx-auto text-slate-700 mb-4" size={48} />

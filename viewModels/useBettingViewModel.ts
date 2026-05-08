@@ -57,16 +57,22 @@ export function useBettingViewModel() {
   }, []);
 
   useEffect(() => {
-    setActiveBets([]);
     setBetSelection(null);
     setBonusMessage(null);
 
     const uid = localStorage.getItem('uid');
     if (!uid) {
+      // Logged-out path: wipe any leftover state so a previously-signed-in
+      // user's bets aren't visible on the login screen.
+      setActiveBets([]);
       setBalance(INITIAL_BALANCE);
       setDailyBonusAvailable(true);
       return;
     }
+    // Logged-in path: do NOT clear activeBets here. Clearing causes a brief
+    // empty-list flash on remount/refresh while the snapshot listener spins
+    // up, which users perceive as "my bets disappeared". The snapshot below
+    // will replace `activeBets` atomically as soon as the first read lands.
 
     getUserMoney(uid).then((money) => {
       if (money != null && Number.isFinite(money)) {
