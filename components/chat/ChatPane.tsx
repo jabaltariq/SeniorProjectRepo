@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import type { Friend } from '../../models';
 import { Send, Trash2, X } from 'lucide-react';
+import { UserAvatar } from '../UserAvatar';
 
 export type ChatMessage = {
   id: string;
@@ -53,12 +54,24 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
 
   return (
     <div className="flex flex-col h-[72vh] min-h-[520px]">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-700/60">
+      <div className="relative overflow-hidden border-b border-slate-700/60 px-4 py-3">
+        {otherUser.profileBackgroundUrl ? (
+          <div
+            className="absolute inset-0 bg-cover bg-center opacity-45"
+            style={{ backgroundImage: `url("${otherUser.profileBackgroundUrl}")` }}
+            aria-hidden
+          />
+        ) : null}
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/70 to-slate-950/35" aria-hidden />
+        <div className="relative z-10 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <div className="relative">
-            <div className="h-10 w-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-blue-400">
-              {otherInitials}
-            </div>
+            <UserAvatar
+              initials={otherInitials}
+              imageUrl={otherUser.avatarUrl}
+              alt={`${otherUser.name}'s avatar`}
+              className="h-10 w-10 rounded-xl"
+            />
             <div
               className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-900 ${
                 otherUser.status === 'online'
@@ -96,6 +109,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             </button>
           )}
         </div>
+        </div>
       </div>
 
       <div
@@ -130,9 +144,13 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                     <div className="flex items-start gap-2">
                       {!isSelf && (
                         <div className="flex-shrink-0 mt-1">
-                          <div className="h-7 w-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-blue-400 text-[11px]">
-                            {otherInitials}
-                          </div>
+                          <UserAvatar
+                            initials={otherInitials}
+                            imageUrl={otherUser.avatarUrl}
+                            alt={`${otherUser.name}'s avatar`}
+                            className="h-7 w-7 rounded-lg"
+                            textClassName="text-[11px] text-blue-400"
+                          />
                         </div>
                       )}
                       <div>

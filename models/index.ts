@@ -68,6 +68,8 @@ export interface LeaderboardEntry {
   id: string;
   name: string;
   avatar: string;
+  avatarUrl?: string;
+  profileBackgroundUrl?: string;
   netWorth: number;
   winRate: number;
   rank: number;
@@ -79,6 +81,8 @@ export interface SocialActivity {
   userId: string;
   userName: string;
   userAvatar: string;
+  userAvatarUrl?: string;
+  userProfileBackgroundUrl?: string;
   action: string;
   target: string;
   timestamp: string;
@@ -88,6 +92,8 @@ export interface Friend {
   id: string;
   name: string;
   avatar: string;
+  avatarUrl?: string;
+  profileBackgroundUrl?: string;
   status: 'online' | 'offline' | 'away';
   lastActive: string;
   privacyEnabled: boolean;

@@ -3,10 +3,13 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import type { Bet, Friend, SocialActivity } from '../models';
 import { Eye, Swords, Search, UserPlus2, UserPlus } from 'lucide-react';
 import { ChatPane, type ChatMessage } from './chat/ChatPane';
+import { UserAvatar } from './UserAvatar';
+import { ANONYMOUS_PROFILE_AVATAR_PATH, defaultAvatarForUid } from '@/models/defaultProfileAvatars';
 import {
   deleteDirectMessage,
   getUidByUsername,
   getUserName,
+  getUserProfileSummary,
   searchUsersByNamePrefix,
   sendDirectMessage,
   sendFriendRequest,
@@ -98,13 +101,15 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
         }
         if (!zoomId || cancelled) return;
 
-        const zoomName = (await getUserName(zoomId)) ?? 'ZoomerChud';
+        const zoomSummary = await getUserProfileSummary(zoomId);
+        const zoomName = zoomSummary?.name ?? (await getUserName(zoomId)) ?? 'ZoomerChud';
         if (cancelled) return;
 
         setInjectedZoomerChud({
+          ...zoomSummary,
           id: zoomId,
           name: zoomName,
-          avatar: zoomName.slice(0, 2),
+          avatar: zoomSummary?.avatar ?? zoomName.slice(0, 2).toUpperCase(),
           status: 'online',
           lastActive: 'Now',
           privacyEnabled: false,
@@ -133,7 +138,21 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
       return;
     }
 
-    const inList = friendsForRail.find((f) => f.id === activeChatUserId) ?? null;
+    const activityUser = activities.find((a) => a.userId === activeChatUserId && a.userName !== 'Anonymous User');
+    const inList =
+      friendsForRail.find((f) => f.id === activeChatUserId) ??
+      (activityUser
+        ? {
+            id: activityUser.userId,
+            name: activityUser.userName,
+            avatar: activityUser.userAvatar,
+            avatarUrl: activityUser.userAvatarUrl,
+            profileBackgroundUrl: activityUser.userProfileBackgroundUrl,
+            status: 'online' as const,
+            lastActive: 'Now',
+            privacyEnabled: false,
+          }
+        : null);
     if (inList) {
       setActiveFriend(inList);
       return;
@@ -149,16 +168,16 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
       privacyEnabled: false,
     });
 
-    void getUserName(activeChatUserId)
-      .then((name) => {
-        if (!name) return;
+    void getUserProfileSummary(activeChatUserId)
+      .then((summary) => {
+        if (!summary) return;
         setActiveFriend((prev) => {
           if (!prev) return prev;
-          return { ...prev, name, avatar: name.slice(0, 2) };
+          return { ...prev, ...summary };
         });
       })
       .catch(() => undefined);
-  }, [activeChatUserId, friendsForRail]);
+  }, [activeChatUserId, friendsForRail, activities]);
 
   const makeThreadId = (uidA: string, uidB: string) => {
     const [a, b] = [uidA, uidB].sort((x, y) => x.localeCompare(y));
@@ -285,6 +304,13 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
     if (text.length <= max) return text;
     return `${text.slice(0, max - 1).trimEnd()}…`;
   };
+  const activityAvatarUrl = (activity: SocialActivity) => {
+    if (activity.userAvatarUrl) return activity.userAvatarUrl;
+    if (activity.userName === 'Anonymous User' || activity.userAvatar === '?') {
+      return `/bethub/${ANONYMOUS_PROFILE_AVATAR_PATH}`;
+    }
+    return `/bethub/${defaultAvatarForUid(activity.userId, activity.userName)}`;
+  };
   const isMessageOpen = Boolean(activeFriend && threadId && currentUid);
   const messagesColClass = !isMessageOpen ? 'xl:col-span-1' : 'xl:col-span-4';
   const activityColClass = !isMessageOpen ? 'xl:col-span-8' : 'xl:col-span-5';
@@ -342,9 +368,12 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div className="relative shrink-0">
-                  <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-blue-400">
-                    {friend.avatar}
-                  </div>
+                  <UserAvatar
+                    initials={friend.avatar}
+                    imageUrl={friend.avatarUrl}
+                    alt={`${friend.name}'s avatar`}
+                    className="w-10 h-10 rounded-xl"
+                  />
                   <div
                     className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-900 ${
                       friend.status === 'online'
@@ -421,9 +450,13 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                             onClick={() => navigate(`/profile/${u.uid}`)}
                             className="min-w-0 flex items-center gap-2 text-left hover:opacity-90"
                           >
-                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-[11px] font-bold text-blue-300">
-                              {u.name.slice(0, 2).toUpperCase()}
-                            </span>
+                            <UserAvatar
+                              initials={u.name.slice(0, 2).toUpperCase()}
+                              imageUrl={u.avatarUrl}
+                              alt={`${u.name}'s avatar`}
+                              className="h-8 w-8 shrink-0 rounded-lg"
+                              textClassName="text-[11px] text-blue-300"
+                            />
                             <span className="min-w-0">
                               <span className="block truncate text-sm font-semibold text-slate-100">{u.name}</span>
                               <span className="block text-[10px] text-slate-500">
@@ -515,9 +548,13 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                 key={activity.id}
                 className="glass-card rounded-2xl p-4 flex gap-4 border-slate-800 hover:bg-slate-800/20 transition-all"
               >
-                <div className="w-10 h-10 rounded-xl bg-slate-800 flex-shrink-0 flex items-center justify-center font-bold text-slate-400">
-                  {activity.userAvatar}
-                </div>
+                <UserAvatar
+                  initials={activity.userAvatar}
+                  imageUrl={activityAvatarUrl(activity)}
+                  alt={`${activity.userName}'s avatar`}
+                  className="w-10 h-10 rounded-xl flex-shrink-0"
+                  textClassName="text-slate-400"
+                />
                 <div className="flex-1">
                   <div className="flex justify-between items-start gap-3">
                     <p className="text-sm min-w-0">

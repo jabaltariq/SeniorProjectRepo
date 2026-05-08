@@ -9,7 +9,6 @@ import {
   Target,
   Clock3,
   Swords,
-  Camera,
 } from 'lucide-react';
 import { CounterBetModal } from '../components/CounterBetModal';
 import { proposeHeadToHead, sendFriendRequest } from '@/services/dbOps';
@@ -28,9 +27,9 @@ import {
 import type { Bet } from '../models';
 import { SettingsView } from './SettingsView';
 import { getUserStoreState } from '@/services/storeOps';
-import { uploadProfileAvatar } from '@/services/profileMediaOps';
 import { findStoreAvatar } from '@/models/storeItems';
 import { profileBackgroundForUid } from '@/models/profileBackgrounds';
+import { defaultAvatarForUid } from '@/models/defaultProfileAvatars';
 
 interface ProfileViewProps {
   userInitials: string;
@@ -76,7 +75,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // Loaded by the same loadAccount() effect below so we don't add another
   // request lifecycle to keep track of.
   const [equippedAvatarUrl, setEquippedAvatarUrl] = useState<string | null>(null);
-  const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null);
+  const [defaultAvatarPath, setDefaultAvatarPath] = useState<string | null>(null);
   const [profileBackgroundUrl, setProfileBackgroundUrl] = useState<string | null>(null);
   const [netWorth, setNetWorth] = useState(balance);
   const [wins, setWins] = useState(0);
@@ -96,8 +95,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [isEditingBets, setIsEditingBets] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [publicPreview, setPublicPreview] = useState(false);
-  const [avatarUploadMessage, setAvatarUploadMessage] = useState<string | null>(null);
-  const [avatarUploading, setAvatarUploading] = useState(false);
   const [friendRequestState, setFriendRequestState] = useState<'idle' | 'sending' | 'sent'>('idle');
 
   // Counter-Bet (head-to-head) modal target.
@@ -161,7 +158,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         if (profile) {
           setDisplayName(profile.name);
           setAvatarText(profile.avatar || userInitials || 'BH');
-          setCustomAvatarUrl(profile.customAvatarUrl ?? null);
+          setDefaultAvatarPath(profile.defaultAvatarPath ?? null);
           setProfileBackgroundUrl(profile.profileBackgroundUrl ?? null);
           setNetWorth(isOwnProfile ? balance : profile.netWorth);
           setWins(profile.wins);
@@ -180,7 +177,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         } else {
           setDisplayName(isOwnProfile ? userEmail.split('@')[0] || 'My account' : 'Account not found');
           setAvatarText(userInitials || 'BH');
-          setCustomAvatarUrl(null);
+          setDefaultAvatarPath(null);
           setProfileBackgroundUrl(null);
           setNetWorth(balance);
           setWins(0);
@@ -245,31 +242,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         : [...prev.bets, betId],
     }));
   }, [updateProfileDisplay]);
-
-  const handleAvatarUpload = async (file: File | undefined) => {
-    if (!file || !currentUserId || !isOwnProfile) return;
-
-    setAvatarUploadMessage(null);
-    setAvatarUploading(true);
-    const result = await uploadProfileAvatar(currentUserId, file);
-    setAvatarUploading(false);
-
-    if (result.success === true) {
-      setCustomAvatarUrl(result.url);
-      setAvatarUploadMessage('Profile picture updated.');
-      setTimeout(() => setAvatarUploadMessage(null), 3000);
-      return;
-    }
-
-    const error = result.error;
-    const message =
-      error === 'FILE_TOO_LARGE'
-        ? 'Choose an image under 5MB.'
-        : error === 'INVALID_FILE'
-          ? 'Choose a valid image file.'
-          : 'Upload failed. Try again.';
-    setAvatarUploadMessage(message);
-  };
 
   const handleSendFriendRequest = async () => {
     if (!currentUserId || isOwnProfile || !displayName || friendRequestState !== 'idle') return;
@@ -367,7 +339,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const viewingAsPublic = Boolean(isOwnProfile && publicPreview);
   const showEditUi = isOwnProfile && !viewingAsPublic;
-  const profileAvatarUrl = customAvatarUrl ?? equippedAvatarUrl;
+  const resolvedDefaultAvatarPath = defaultAvatarPath ?? defaultAvatarForUid(profileUserId, displayName);
+  const defaultAvatarUrl = `/bethub/${resolvedDefaultAvatarPath}`;
+  const profileAvatarUrl = equippedAvatarUrl ?? defaultAvatarUrl;
   const coverImageUrl = profileBackgroundUrl ?? profileBackgroundForUid(profileUserId, displayName);
   const statsForDisplay = !isOwnProfile || viewingAsPublic ? displayedStats : statsForSection;
   const achievementsForDisplay = !isOwnProfile || viewingAsPublic ? displayedAchievements : achievementsForSection;
@@ -422,8 +396,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                             loading="lazy"
                             referrerPolicy="no-referrer"
                             onError={() => {
-                              if (customAvatarUrl) setCustomAvatarUrl(null);
-                              else setEquippedAvatarUrl(null);
+                              setEquippedAvatarUrl(null);
                             }}
                           />
                         ) : (
@@ -433,27 +406,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         )}
                       </div>
                     </div>
-                    {showEditUi && (
-                      <div className="mt-3 w-24 text-center sm:w-28">
-                        <label className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-full border border-white/15 bg-slate-950/70 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-200 shadow-lg shadow-black/25 transition-colors hover:border-blue-300/45 hover:bg-blue-500/15 ${avatarUploading ? 'pointer-events-none opacity-70' : ''}`}>
-                          <Camera size={12} aria-hidden />
-                          {avatarUploading ? 'Uploading' : 'Photo'}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="sr-only"
-                            disabled={avatarUploading}
-                            onChange={(event) => {
-                              void handleAvatarUpload(event.target.files?.[0]);
-                              event.currentTarget.value = '';
-                            }}
-                          />
-                        </label>
-                        {avatarUploadMessage && (
-                          <p className="mt-2 text-[10px] leading-tight text-slate-300">{avatarUploadMessage}</p>
-                        )}
-                      </div>
-                    )}
                   </div>
                   <div className="min-w-0 flex-1 text-left">
                     <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.28em] text-blue-200/80">
@@ -467,7 +419,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     </p>
                     {isOwnProfile && (
                       <p className="mt-3 text-[10px] font-bold tracking-[0.22em] text-slate-400">
-                        {customAvatarUrl ? 'CUSTOM PHOTO ACTIVE' : 'PUBLIC PREVIEW READY'}
+                        PUBLIC PREVIEW READY
                       </p>
                     )}
                     {!isOwnProfile && profileUserId && (

@@ -2,7 +2,6 @@ import type { Friend, SocialActivity } from './index';
 
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 export const INITIAL_BALANCE = 10000;
 export const DAILY_BONUS_AMOUNT = 500;
 export const BONUS_STORAGE_KEY = 'bethub_last_bonus_claim';
@@ -45,7 +44,6 @@ export const FIREBASE_CONFIG = {
 export var APP = initializeApp(FIREBASE_CONFIG);
 
 export const db = getFirestore(APP);
-export const storage = getStorage(APP);
 
 export const MOCK_FRIENDS: Friend[] = [
   { id: 'f1', name: 'Sarah_Spin', avatar: 'SS', status: 'online', lastActive: 'Now', privacyEnabled: false },

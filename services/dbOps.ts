@@ -1,12 +1,44 @@
 import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, deleteDoc, Timestamp, runTransaction, deleteField, query, where, orderBy, limit, writeBatch, increment, QueryDocumentSnapshot, DocumentData, DocumentReference, addDoc } from "firebase/firestore";
 import { db } from "@/models/constants.ts";
 import {Bet, LeaderboardEntry, ParlayLeg, BetStatus, Friend, SocialActivity, HeadToHead, HeadToHeadStatus} from "@/models";
-import { PROFILE_BACKGROUND_URLS } from "@/models/profileBackgrounds";
+import { PROFILE_BACKGROUND_URLS, profileBackgroundForUid } from "@/models/profileBackgrounds";
+import {
+    ANONYMOUS_PROFILE_AVATAR_PATH,
+    BESTBETTER_DEFAULT_AVATAR_PATH,
+    defaultAvatarForUid,
+    FATCAT97_DEFAULT_AVATAR_PATH,
+    isDefaultProfileAvatarPath,
+    MODE_TEST_DEFAULT_AVATAR_PATH,
+} from "@/models/defaultProfileAvatars";
 import {randomInt} from "node:crypto";
 
 export var currBets = new Array<Bet>;
 
 export var allBets = new Array<Bet>;
+
+const appPublicAsset = (path: string) => `/bethub/${path}`;
+const anonymousProfileAvatarUrl = appPublicAsset(ANONYMOUS_PROFILE_AVATAR_PATH);
+
+function resolveProfileAvatarUrl(uid: string, name: string, data: DocumentData): string {
+    const normalizedName = name.toLowerCase();
+    const defaultPath = normalizedName === "modetest"
+        ? MODE_TEST_DEFAULT_AVATAR_PATH
+        : normalizedName === "fatcat97"
+            ? FATCAT97_DEFAULT_AVATAR_PATH
+        : normalizedName === "bestbetter"
+            ? BESTBETTER_DEFAULT_AVATAR_PATH
+        : isDefaultProfileAvatarPath(data.defaultAvatarPath)
+            ? data.defaultAvatarPath
+            : defaultAvatarForUid(uid, name);
+
+    return appPublicAsset(defaultPath);
+}
+
+function resolveProfileBackgroundUrl(uid: string, name: string, data: DocumentData): string {
+    return typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
+        ? data.profileBackgroundUrl
+        : profileBackgroundForUid(uid, name);
+}
 
 /**
  * Sets a specified user's username in Firestore
@@ -1400,6 +1432,8 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
             id:            docSnap.id,
             name,
             avatar:        name.slice(0, 2).toUpperCase(),
+            avatarUrl:     resolveProfileAvatarUrl(docSnap.id, name, data),
+            profileBackgroundUrl: resolveProfileBackgroundUrl(docSnap.id, name, data),
             netWorth:      Math.round(money),
             winRate,
             rank:          1,
@@ -1443,7 +1477,7 @@ export type AccountProfile = {
     name: string;
     email?: string;
     avatar: string;
-    customAvatarUrl?: string;
+    defaultAvatarPath?: string;
     profileBackgroundUrl?: string;
     netWorth: number;
     wins: number;
@@ -1528,9 +1562,15 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
         name,
         email: typeof data.email === "string" ? data.email : undefined,
         avatar: name.slice(0, 2).toUpperCase(),
-        customAvatarUrl: typeof data.customAvatarUrl === "string" && data.customAvatarUrl.trim()
-            ? data.customAvatarUrl.trim()
-            : undefined,
+        defaultAvatarPath: name.toLowerCase() === "modetest"
+            ? MODE_TEST_DEFAULT_AVATAR_PATH
+            : name.toLowerCase() === "fatcat97"
+                ? FATCAT97_DEFAULT_AVATAR_PATH
+            : name.toLowerCase() === "bestbetter"
+                ? BESTBETTER_DEFAULT_AVATAR_PATH
+            : isDefaultProfileAvatarPath(data.defaultAvatarPath)
+                ? data.defaultAvatarPath
+                : undefined,
         profileBackgroundUrl: typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
             ? data.profileBackgroundUrl
             : undefined,
@@ -1544,16 +1584,34 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
     };
 }
 
-export async function setCustomProfileAvatar(uid: string, imageUrl: string | null): Promise<void> {
-    await setDoc(doc(db, "userInfo", uid), {
-        customAvatarUrl: imageUrl && imageUrl.trim() ? imageUrl.trim() : deleteField(),
-    }, { merge: true });
-}
-
 export async function setUserProfileBackground(uid: string, imageUrl: string): Promise<void> {
     if (!PROFILE_BACKGROUND_URLS.includes(imageUrl as typeof PROFILE_BACKGROUND_URLS[number])) return;
     await setDoc(doc(db, "userInfo", uid), {
         profileBackgroundUrl: imageUrl,
+    }, { merge: true });
+}
+
+export async function getUserProfileSummary(uid: string): Promise<Friend | null> {
+    const snap = await getDoc(doc(db, "userInfo", uid));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    const name = typeof data["name"] === "string" && data["name"].trim() ? data["name"].trim() : "Unknown";
+    return {
+        id: uid,
+        name,
+        avatar: name.slice(0, 2).toUpperCase(),
+        avatarUrl: resolveProfileAvatarUrl(uid, name, data),
+        profileBackgroundUrl: resolveProfileBackgroundUrl(uid, name, data),
+        status: "online",
+        lastActive: "Now",
+        privacyEnabled: data["privacy"] === true,
+    };
+}
+
+export async function setUserDefaultProfileAvatar(uid: string, avatarPath: string): Promise<void> {
+    if (!isDefaultProfileAvatarPath(avatarPath)) return;
+    await setDoc(doc(db, "userInfo", uid), {
+        defaultAvatarPath: avatarPath,
     }, { merge: true });
 }
 
@@ -1709,6 +1767,8 @@ async function buildCommunityActivity(
         const rawName = typeof userData["name"] === "string" ? userData["name"] : "";
         const userName = isPrivate || !rawName ? "Anonymous User" : rawName;
         const userAvatar = isPrivate || !rawName ? "?" : rawName.slice(0, 2);
+        const userAvatarUrl = isPrivate || !rawName ? anonymousProfileAvatarUrl : resolveProfileAvatarUrl(uid, rawName, userData);
+        const userProfileBackgroundUrl = isPrivate || !rawName ? undefined : resolveProfileBackgroundUrl(uid, rawName, userData);
 
         const placedAtRaw    = data["placedAt"]      as Timestamp | undefined;
         const eventStartsRaw = data["eventStartsAt"] as Timestamp | undefined;
@@ -1740,6 +1800,8 @@ async function buildCommunityActivity(
             userId:    uid,
             userName,
             userAvatar,
+            userAvatarUrl,
+            userProfileBackgroundUrl,
             action:    isParlay ? "placed a parlay on" : "placed a bet on",
             target:    String(data["marketTitle"] ?? ""),
             timestamp: formatActivityTimestamp(placedAtDate),
@@ -2084,6 +2146,8 @@ export function subscribeToFriends(
                             id: friendUid,
                             name,
                             avatar: name.slice(0, 2),
+                            avatarUrl: resolveProfileAvatarUrl(friendUid, name, friendData),
+                            profileBackgroundUrl: resolveProfileBackgroundUrl(friendUid, name, friendData),
                             status: 'online',
                             lastActive: "dont care",
                             privacyEnabled: friendData["privacy"] === true,
@@ -2279,6 +2343,8 @@ export async function getFriends(uid : string) : Promise<Friend[]> {
                     id: friend,
                     name: friendData["name"],
                     avatar: friendData["name"].slice(0, 2),
+                    avatarUrl: resolveProfileAvatarUrl(friend, friendData["name"], friendData),
+                    profileBackgroundUrl: resolveProfileBackgroundUrl(friend, friendData["name"], friendData),
                     status: 'online',
                     lastActive: "dont care",
                     privacyEnabled: false
@@ -2293,6 +2359,8 @@ export interface UserSearchResult {
     uid: string;
     name: string;
     privacyEnabled: boolean;
+    avatarUrl?: string;
+    profileBackgroundUrl?: string;
 }
 
 /**
@@ -2323,6 +2391,8 @@ export async function searchUsersByNamePrefix(
             uid,
             name,
             privacyEnabled: data["privacy"] === true,
+            avatarUrl: resolveProfileAvatarUrl(uid, name, data),
+            profileBackgroundUrl: resolveProfileBackgroundUrl(uid, name, data),
         });
     }
 
