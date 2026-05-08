@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -44,6 +44,7 @@ import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
 import { computeParlayRollup } from '@/services/parlayRollup';
+import { WinCelebrationModal } from '../components/WinCelebrationModal';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
 
@@ -176,6 +177,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const [promotionsOpen, setPromotionsOpen] = useState(false);
   const [mockNflGames, setMockNflGames] = useState<MockNflGameState[]>([]);
   const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
+  const [pendingWinBets, setPendingWinBets] = useState<Bet[]>([]);
+  const [activeWinBet, setActiveWinBet] = useState<Bet | null>(null);
+  const seenWinningBetIds = useRef<Set<string>>(new Set());
+  const hasInitializedWinTracking = useRef(false);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
 
@@ -313,12 +318,20 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     // Remove any finalized mock legs from active selection state so users
     // cannot place singles/parlays on games that already ended.
     const staleSelections = parlaySelections.filter((sel) => finalizedMockMarketIds.has(sel.market.id));
+    const staleSelectionKeys = new Set(
+      staleSelections.map((sel) => `${sel.market.id}:${sel.option.id}`),
+    );
     for (const stale of staleSelections) {
       onSelectBet(stale.market, stale.option);
     }
 
     if (betSelection && finalizedMockMarketIds.has(betSelection.market.id)) {
-      onSelectBet(betSelection.market, betSelection.option);
+      const selectedKey = `${betSelection.market.id}:${betSelection.option.id}`;
+      // If this selection was already removed via staleSelections above, do not
+      // toggle it a second time (second toggle would re-add it).
+      if (!staleSelectionKeys.has(selectedKey)) {
+        onSelectBet(betSelection.market, betSelection.option);
+      }
     }
   }, [mockNflGames, parlaySelections, betSelection, onSelectBet]);
 
@@ -406,6 +419,28 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       setIsBetSlipCollapsed(false);
     }
   }, [betSelection, parlaySelections.length]);
+
+  useEffect(() => {
+    const winningBets = props.activeBets.filter((bet) => (bet.status ?? 'PENDING') === 'WON');
+    if (!hasInitializedWinTracking.current) {
+      seenWinningBetIds.current = new Set(winningBets.map((bet) => bet.id));
+      hasInitializedWinTracking.current = true;
+      return;
+    }
+
+    const unseen = winningBets.filter((bet) => !seenWinningBetIds.current.has(bet.id));
+    if (unseen.length === 0) return;
+
+    unseen.forEach((bet) => seenWinningBetIds.current.add(bet.id));
+    setPendingWinBets((prev) => [...prev, ...unseen]);
+  }, [props.activeBets]);
+
+  useEffect(() => {
+    if (activeWinBet || pendingWinBets.length === 0) return;
+    const [next, ...rest] = pendingWinBets;
+    setActiveWinBet(next);
+    setPendingWinBets(rest);
+  }, [activeWinBet, pendingWinBets]);
 
 
   // ── Grab uid once for sidebar cards ────────────────────────────
@@ -1143,7 +1178,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             )}
                             <div className="space-y-2">
                               {mockNflGames.map((game) => (
-                                <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
+                                <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
                                   {(() => {
                                     const mockMarket = mockMarketForGame(game);
                                     const spreadAway = mockMarket.options[0];
@@ -1313,7 +1348,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         )}
                         {showApiMarketsTable && (
                           <>
-                        <div className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] bg-slate-900/75 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        <div className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] bg-slate-900/75 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                           <div>Game</div>
                           <div className="text-center">Spread</div>
                           <div className="text-center">Total</div>
@@ -1339,7 +1374,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               return (
                                   <div
                                       key={market.id}
-                                      className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] items-stretch px-4 py-2.5 border-t border-slate-800/90 bg-slate-900/25 hover:bg-slate-800/35 transition-colors"
+                                      className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] items-stretch px-4 py-2.5 border-t border-slate-800/90 bg-slate-900/25 hover:bg-slate-800/35 transition-colors"
                                   >
                                     <div className="pr-3">
                                       <p className="text-[10px] font-semibold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
@@ -1547,6 +1582,11 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <Ticket size={18} />
           </button>
         )}
+        <WinCelebrationModal
+          bet={activeWinBet}
+          open={Boolean(activeWinBet)}
+          onClose={() => setActiveWinBet(null)}
+        />
       </div>
   );
 };

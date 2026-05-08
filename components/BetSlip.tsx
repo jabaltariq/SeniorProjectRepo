@@ -47,6 +47,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   const [tab, setTab] = useState<SlipTab>('SINGLES');
   const [expandedParlays, setExpandedParlays] = useState<Record<string, boolean>>({});
   const previousParlayCount = useRef(0);
+  const previousSelectionKey = useRef<string | null>(null);
 
   const isSinglesEmpty = !selection;
   const isParlayEmpty = parlaySelections.length === 0;
@@ -167,6 +168,17 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     }
     previousParlayCount.current = parlaySelections.length;
   }, [parlaySelections.length]);
+
+  useEffect(() => {
+    if (!selection) {
+      previousSelectionKey.current = null;
+      return;
+    }
+    const key = `${selection.market.id}:${selection.option.id}`;
+    if (previousSelectionKey.current === key) return;
+    previousSelectionKey.current = key;
+    setTab('SINGLES');
+  }, [selection]);
 
   const setStakeFromInput = (raw: string) => {
     const cleaned = raw.replace(/[^\d.]/g, '');
