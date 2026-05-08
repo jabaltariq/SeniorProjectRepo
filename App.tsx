@@ -53,6 +53,7 @@ const App: React.FC = () => {
         parlaySelections={dashboard.betting.parlaySelections}
         dailyBonusAvailable={dashboard.betting.dailyBonusAvailable}
         bonusMessage={dashboard.betting.bonusMessage}
+        parlayRuleError={dashboard.betting.parlayRuleError}
         view={dashboard.view}
         userInitials={dashboard.auth.userInitials}
         userEmail={dashboard.auth.userEmail ?? ''}

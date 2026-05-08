@@ -16,6 +16,12 @@ interface BetSlipProps {
   balance: number;
   activeBoost: BoostType | null;
   limitError: string | null;
+  /** Strict-parlay rule rejection (max legs / both-sides). Displays as a
+   *  non-blocking inline banner at the top of the slip and auto-clears
+   *  after a short timeout in the viewModel. Intentionally separate from
+   *  `limitError` so it does NOT disable the place-bet button — the user
+   *  may still have a valid parlay queued up. */
+  parlayRuleError?: string | null;
 }
 
 export const BetSlip: React.FC<BetSlipProps> = ({
@@ -29,6 +35,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                                                   balance,
                                                   activeBoost,
                                                   limitError,
+                                                  parlayRuleError,
                                                 }) => {
   const [stakeInput, setStakeInput] = useState<string>('20');
   const [tab, setTab] = useState<SlipTab>('SINGLES');
@@ -190,6 +197,17 @@ export const BetSlip: React.FC<BetSlipProps> = ({
               <X size={16} />
             </button>
           </div>
+
+          {parlayRuleError ? (
+              <div
+                  role="alert"
+                  aria-live="polite"
+                  className="mb-3 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-300"
+              >
+                <AlertCircle size={11} />
+                {parlayRuleError}
+              </div>
+          ) : null}
 
           <div className="flex border-b border-slate-800 mb-2">
             {(['SINGLES', 'PARLAYS'] as const).map((t) => (

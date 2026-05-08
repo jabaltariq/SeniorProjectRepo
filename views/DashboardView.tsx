@@ -86,6 +86,9 @@ interface DashboardViewProps {
   parlaySelections: Array<{ market: Market; option: MarketOption }>;
   dailyBonusAvailable: boolean;
   bonusMessage: string | null;
+  /** Inline error from strict-parlay rules (max legs / both-sides). Surfaced
+   *  by the BetSlip; auto-clears in the viewModel. */
+  parlayRuleError: string | null;
   view: string;
   userInitials: string;
   userEmail: string;
@@ -132,6 +135,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     parlaySelections,
     dailyBonusAvailable,
     bonusMessage,
+    parlayRuleError,
     userInitials,
     userEmail,
     sportFilter,
@@ -1296,6 +1300,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 balance={balance}
                 activeBoost={activeBoost}
                 limitError={null}
+                parlayRuleError={parlayRuleError}
             />
         )}
         {view === 'MARKETS' && isBetSlipCollapsed && (
