@@ -3,6 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { LeaderboardEntry } from '../models';
 import { Trophy, TrendingUp, Medal, ArrowUp, ArrowDown } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
+import { defaultAvatarForUid } from '@/models/defaultProfileAvatars';
 
 interface LeaderboardProps {
   entries: LeaderboardEntry[];
@@ -117,7 +119,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
               </tr>
             ) : (
             sortedEntries.map((entry, idx) => {
-              const displayRank = sortKey === 'rank' ? entry.rank : idx + 1;
+              const avatarUrl = entry.avatarUrl ?? `/bethub/${defaultAvatarForUid(entry.id, entry.name)}`;
               return (
               <tr 
                 key={entry.id} 
@@ -125,19 +127,23 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
               >
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
-                    {displayRank === 1 && <Medal className="text-yellow-400" size={16} />}
-                    {displayRank === 2 && <Medal className="text-slate-300" size={16} />}
-                    {displayRank === 3 && <Medal className="text-amber-600" size={16} />}
-                    <span className={`font-bold ${displayRank <= 3 ? 'text-lg' : 'text-slate-400'}`}>
-                      #{displayRank}
+                    {entry.rank === 1 && <Medal className="text-yellow-400" size={16} />}
+                    {entry.rank === 2 && <Medal className="text-slate-300" size={16} />}
+                    {entry.rank === 3 && <Medal className="text-amber-600" size={16} />}
+                    <span className={`font-bold ${entry.rank <= 3 ? 'text-lg' : 'text-slate-400'}`}>
+                      #{entry.rank}
                     </span>
                   </div>
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] font-bold text-blue-400">
-                      {entry.avatar}
-                    </div>
+                    <UserAvatar
+                      initials={entry.avatar}
+                      imageUrl={avatarUrl}
+                      alt={`${entry.name}'s avatar`}
+                      className="w-10 h-10 rounded-xl"
+                      textClassName="text-[10px] text-blue-400"
+                    />
                     <div>
                       <NavLink
                         to={`/profile/${entry.id}`}

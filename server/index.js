@@ -1,13 +1,30 @@
 /**
  * Express backend for BetHub
  * Handles auth and proxies Odds API requests (keeps API key server-side)
+ *
+ * TODO(settlement): The original `settleOpenBets` cron was wired up here but
+ * its implementation file (`server/settlement.js`) was never committed to any
+ * branch — git log -S 'settleOpenBets' shows the import landed in 55b3095
+ * without the file. As a result `npm run server` has been crash-on-boot since
+ * that commit. Today only the in-app `settleUserMockNflGameBets` path runs
+ * (called from the frontend when a mock NFL game finalizes); API-game
+ * settlement does not run anywhere. When somebody resurrects automatic API
+ * settlement, plug it back in here:
+ *   1. create `server/settlement.js` exporting `settleOpenBets()`
+ *   2. uncomment the import + cron block below
+ *   3. swap the 503 stub on POST /api/settle-bets for the real call
+ *      The shared building blocks (`getPendingBets`, `settleBet`,
+ *      `recordParlayLegResult`, `settleParlayBetIfReady`,
+ *      `getAcceptedHeadToHead`, `settleHeadToHead`) already exist in
+ *      services/dbOps.ts.
+ *   - 5.8.2026 Aidan O'Halloran
  */
 import dotenv from 'dotenv';
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { loadOddsApiKey } from '../lib/loadOddsApiKey.js';
-import { settleOpenBets } from './settlement.js';   // ← NEW
+// import { settleOpenBets } from './settlement.js';  // disabled — file was never committed; see TODO above
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -25,30 +42,28 @@ const users = new Map();
 // Middleware
 app.use(express.json());
 
-// ─── Settlement cron ──────────────────────────────────────────────────────────
-// Runs every 10 minutes while the server is alive.
-// Uses setInterval instead of node-cron to avoid an extra dependency.
-// First run is delayed 30 s after boot so Firebase Admin has time to init.
-const SETTLEMENT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
-
-// const SETTLEMENT_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
-
-
-async function runSettlement() {
-  try {
-    console.log('[settlement] Running job…');
-    const result = await settleOpenBets();
-    console.log('[settlement] Done:', JSON.stringify(result));
-  } catch (err) {
-    // Never crash the server — just log
-    console.error('[settlement] Error:', err.message ?? err);
-  }
-}
-
-setTimeout(() => {
-  void runSettlement();                                   // run once on boot
-  setInterval(() => void runSettlement(), SETTLEMENT_INTERVAL_MS); // then every 10 min
-}, 30_000);
+// ─── Settlement cron (disabled) ──────────────────────────────────────────────
+// The cron previously called `settleOpenBets()` from `server/settlement.js`,
+// but that file was never committed (see TODO at top of this file). The block
+// below is preserved verbatim so it can be re-enabled in one move once a real
+// settlement implementation exists.
+// const SETTLEMENT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
+//
+// async function runSettlement() {
+//   try {
+//     console.log('[settlement] Running job…');
+//     const result = await settleOpenBets();
+//     console.log('[settlement] Done:', JSON.stringify(result));
+//   } catch (err) {
+//     // Never crash the server — just log
+//     console.error('[settlement] Error:', err.message ?? err);
+//   }
+// }
+//
+// setTimeout(() => {
+//   void runSettlement();                                   // run once on boot
+//   setInterval(() => void runSettlement(), SETTLEMENT_INTERVAL_MS);
+// }, 30_000);
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Health check
@@ -56,23 +71,15 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'BetHub API is running' });
 });
 
-// Manual trigger (useful for testing without waiting 10 min)
-// Hit: POST /api/settle-bets
-// Optional header: Authorization: Bearer <SETTLEMENT_SECRET>
-app.post('/api/settle-bets', async (req, res) => {
-  const secret = process.env.SETTLEMENT_SECRET;
-  if (secret) {
-    const auth = req.headers.authorization ?? '';
-    if (auth !== `Bearer ${secret}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-  }
-  try {
-    const result = await settleOpenBets();
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message ?? String(err) });
-  }
+// Manual settlement trigger — currently a 503 stub because `settleOpenBets`
+// was never implemented (see TODO at top of file). Route is kept registered so
+// callers get a clear "not implemented" response instead of a 404.
+app.post('/api/settle-bets', (_req, res) => {
+  res.status(503).json({
+    error: 'Settlement not implemented yet',
+    detail:
+      'server/settlement.js was never committed. See TODO at the top of server/index.js.',
+  });
 });
 
 // --- Auth routes ---

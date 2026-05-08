@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Market, MarketOption, Bet } from '../models';
 import { INITIAL_BALANCE, DAILY_BONUS_AMOUNT } from '../models/constants';
 import {
@@ -10,6 +10,9 @@ import {
   subscribeToUserBets,
 } from '@/services/dbOps';
 import { BoostType } from '@/services/dbOps';
+import { validateParlayAdd } from '@/services/parlayRules';
+
+const PARLAY_ERROR_TIMEOUT_MS = 2500;
 
 /**
  * Balance, placed bets, and bet selection. Used by DashboardView.
@@ -32,17 +35,44 @@ export function useBettingViewModel() {
   const [bonusMessage, setBonusMessage] = useState<string | null>(null);
   const [isPlacingBet, setIsPlacingBet] = useState(false);
 
+  // Inline error surface for strict-parlay rule rejections (max legs,
+  // both-sides). Auto-clears after PARLAY_ERROR_TIMEOUT_MS. Kept separate
+  // from the BetSlip's `limitError` because that one is intentionally
+  // place-bet-blocking; rule rejections must NOT block the user from
+  // placing the parlay they already have.
+  const [parlayRuleError, setParlayRuleError] = useState<string | null>(null);
+  const parlayErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashParlayError = useCallback((msg: string) => {
+    if (parlayErrorTimerRef.current) clearTimeout(parlayErrorTimerRef.current);
+    setParlayRuleError(msg);
+    parlayErrorTimerRef.current = setTimeout(() => {
+      setParlayRuleError(null);
+      parlayErrorTimerRef.current = null;
+    }, PARLAY_ERROR_TIMEOUT_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (parlayErrorTimerRef.current) clearTimeout(parlayErrorTimerRef.current);
+  }, []);
+
   useEffect(() => {
-    setActiveBets([]);
     setBetSelection(null);
     setBonusMessage(null);
 
     const uid = localStorage.getItem('uid');
     if (!uid) {
+      // Logged-out path: wipe any leftover state so a previously-signed-in
+      // user's bets aren't visible on the login screen.
+      setActiveBets([]);
       setBalance(INITIAL_BALANCE);
       setDailyBonusAvailable(true);
       return;
     }
+    // Logged-in path: do NOT clear activeBets here. Clearing causes a brief
+    // empty-list flash on remount/refresh while the snapshot listener spins
+    // up, which users perceive as "my bets disappeared". The snapshot below
+    // will replace `activeBets` atomically as soon as the first read lands.
 
     getUserMoney(uid).then((money) => {
       if (money != null && Number.isFinite(money)) {
@@ -119,9 +149,11 @@ export function useBettingViewModel() {
         ? parlaySelections.map((s) => ({
           marketId:    s.market.id,
           marketTitle: s.market.title,
+          sportKey:    s.market.sport_key,
           optionId:    s.option.id,
           optionLabel: s.option.label,
           odds:        s.option.odds,
+          marketKey:   s.option.marketKey ?? 'h2h',
         }))
         : undefined;
 
@@ -161,7 +193,23 @@ export function useBettingViewModel() {
         setBalance(result.newBalance);
         localStorage.setItem('userMoney', String(result.newBalance));
         setActiveBets((prev) => [newBet, ...prev]);
+        // Clear the slip after a successful placement so the user can't
+        // accidentally double-submit. For singles, dropping `betSelection`
+        // is enough to gray out the singles button (BetSlip's
+        // `singlesPlaceDisabled` keys off `!selection`). For parlays we ALSO
+        // need to empty `parlaySelections` because the parlays button keys
+        // off `parlaySelections.length >= 2`; without this, the same parlay
+        // legs sit in the slip post-placement and a second click would place
+        // a duplicate bet.
         setBetSelection(null);
+        if (isParlayBet) {
+          setParlaySelections([]);
+          setParlayRuleError(null);
+          if (parlayErrorTimerRef.current) {
+            clearTimeout(parlayErrorTimerRef.current);
+            parlayErrorTimerRef.current = null;
+          }
+        }
         // Clear the boost after successful placement
         onBoostUsed?.();
       } else {
@@ -193,6 +241,11 @@ export function useBettingViewModel() {
   const clearBetSelection = useCallback(() => {
     setBetSelection(null);
     setParlaySelections([]);
+    setParlayRuleError(null);
+    if (parlayErrorTimerRef.current) {
+      clearTimeout(parlayErrorTimerRef.current);
+      parlayErrorTimerRef.current = null;
+    }
   }, []);
 
   const selectBet = useCallback((market: Market, option: MarketOption) => {
@@ -200,6 +253,9 @@ export function useBettingViewModel() {
     setParlaySelections((prev) => {
       const exists = prev.some((sel) => `${sel.market.id}:${sel.option.id}` === key);
       if (exists) {
+        // Toggle-off path: clicking an already-selected leg removes it.
+        // Rule validation is intentionally skipped here — removing a leg
+        // can only ever shrink the slip and can't violate any rule.
         const next = prev.filter((sel) => `${sel.market.id}:${sel.option.id}` !== key);
         setBetSelection((current) => {
           if (!current) return next[next.length - 1] ?? null;
@@ -209,11 +265,29 @@ export function useBettingViewModel() {
         });
         return next;
       }
+
+      // Add path: enforce strict-parlay rules. validateParlayAdd is pure.
+      const candidate = {
+        marketId: market.id,
+        marketKey: option.marketKey ?? 'h2h',
+        optionId: option.id,
+      };
+      const existingCandidates = prev.map((s) => ({
+        marketId: s.market.id,
+        marketKey: s.option.marketKey ?? 'h2h',
+        optionId: s.option.id,
+      }));
+      const result = validateParlayAdd(existingCandidates, candidate);
+      if (!result.ok) {
+        flashParlayError(result.message);
+        return prev;
+      }
+
       const next = [...prev, { market, option }];
       setBetSelection({ market, option });
       return next;
     });
-  }, []);
+  }, [flashParlayError]);
 
   return {
     balance,
@@ -222,6 +296,7 @@ export function useBettingViewModel() {
     parlaySelections,
     dailyBonusAvailable,
     bonusMessage,
+    parlayRuleError,
     handlePlaceBet,
     handleDailyBonus,
     clearBetSelection,

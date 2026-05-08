@@ -2,7 +2,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import { NavLink } from 'react-router-dom';
 import {Bet, Friend, SocialActivity} from '../models';
-import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';
+import {Users, Radio, Eye, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';
 import {
   addFriend, FriendRequest,
   getFriends,
@@ -13,6 +13,8 @@ import {
   setUserPrivacy
 } from "@/services/dbOps.ts";
 import { CounterBetModal } from './CounterBetModal';
+import { UserAvatar } from './UserAvatar';
+import { ANONYMOUS_PROFILE_AVATAR_PATH, defaultAvatarForUid } from '@/models/defaultProfileAvatars';
 
 interface SocialViewProps {
   friends: Friend[];
@@ -36,6 +38,14 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
   const toggleDetails = (id : string) => {
     setExpandedId(prev => (prev === id  ? null: id));
   }
+
+  const activityAvatarUrl = (activity: SocialActivity) => {
+    if (activity.userAvatarUrl) return activity.userAvatarUrl;
+    if (activity.userName === 'Anonymous User' || activity.userAvatar === '?') {
+      return `/bethub/${ANONYMOUS_PROFILE_AVATAR_PATH}`;
+    }
+    return `/bethub/${defaultAvatarForUid(activity.userId, activity.userName)}`;
+  };
 
   // ── Counter-Bet (head-to-head) wiring ────────────────────────────
   // Each activity row carries the bet doc id, so we can look up the full Bet
@@ -137,9 +147,12 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
             <div key={friend.id} className="glass-card rounded-2xl p-4 flex items-center justify-between border-slate-800 group hover:border-blue-500/30 transition-all">
               <div className="flex items-center gap-3">
                 <div className="relative">
-                  <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-blue-400">
-                    {friend.avatar}
-                  </div>
+                  <UserAvatar
+                    initials={friend.avatar}
+                    imageUrl={friend.avatarUrl}
+                    alt={`${friend.name}'s avatar`}
+                    className="w-10 h-10 rounded-xl"
+                  />
                   <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-900 ${
                     friend.status === 'online' ? 'bg-green-500' : friend.status === 'away' ? 'bg-yellow-500' : 'bg-slate-600'
                   }`} />
@@ -253,7 +266,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
       <div className="xl:col-span-2 space-y-6">
         <div>
           <h2 className="text-2xl font-black text-white flex items-center gap-2">
-            <Activity className="text-green-400" size={28} /> Activity Feed
+            <Radio className="text-green-400" size={28} strokeWidth={2.5} /> Activity Feed
           </h2>
           <p className="text-slate-400">Real-time pulses from the community.</p>
         </div>
@@ -262,10 +275,13 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
           {activities?.map(activity => (
 
             <div key={activity.id} className="glass-card rounded-2xl p-4 flex gap-4 border-slate-800 hover:bg-slate-800/20 transition-all">
-              <div className="w-10 h-10 rounded-xl bg-slate-800 flex-shrink-0 flex items-center justify-center font-bold text-slate-400">
-                {activity.userAvatar}
-
-              </div>
+              <UserAvatar
+                initials={activity.userAvatar}
+                imageUrl={activityAvatarUrl(activity)}
+                alt={`${activity.userName}'s avatar`}
+                className="w-10 h-10 rounded-xl flex-shrink-0"
+                textClassName="text-slate-400"
+              />
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <p className="text-sm">
@@ -281,7 +297,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                   <button
                       onClick={() => toggleDetails(activity.id)}
                       className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter">
-                    <Activity size={12} /> View Bet
+                    <Eye size={12} /> View Bet
                   </button>
 
                   {(() => {

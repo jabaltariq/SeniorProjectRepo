@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bet, Market, MarketOption } from '../models';
 import { Trash2, X, Minus, TrendingUp, RefreshCcw, AlertCircle } from 'lucide-react';
 import { BoostType } from '@/services/dbOps.ts';
+import { computeParlayRollup } from '@/services/parlayRollup';
 
 type SlipTab = 'SINGLES' | 'PARLAYS';
 
@@ -10,11 +11,22 @@ interface BetSlipProps {
   parlaySelections: Array<{ market: Market; option: MarketOption }>;
   activeBets: Bet[];
   onPlaceBet: (stake: number, betType?: 'single' | 'parlay') => void;
+  onClose: () => void;
   onClear: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
   balance: number;
   activeBoost: BoostType | null;
   limitError: string | null;
+  /** Strict-parlay rule rejection (max legs / both-sides). Displays as a
+   *  non-blocking inline banner at the top of the slip and auto-clears
+   *  after a short timeout in the viewModel. Intentionally separate from
+   *  `limitError` so it does NOT disable the place-bet button — the user
+   *  may still have a valid parlay queued up. */
+  parlayRuleError?: string | null;
+  /** Click handler for the "View all" link in the Recent Bets card header.
+   *  Wired by the parent to react-router navigate('/history'). Optional so
+   *  the BetSlip stays usable in screens where /history isn't reachable. */
+  onViewAllHistory?: () => void;
 }
 
 export const BetSlip: React.FC<BetSlipProps> = ({
@@ -22,16 +34,20 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                                                   parlaySelections,
                                                   activeBets,
                                                   onPlaceBet,
+                                                  onClose,
                                                   onClear,
                                                   onSelectBet,
                                                   balance,
                                                   activeBoost,
                                                   limitError,
+                                                  parlayRuleError,
+                                                  onViewAllHistory,
                                                 }) => {
   const [stakeInput, setStakeInput] = useState<string>('20');
   const [tab, setTab] = useState<SlipTab>('SINGLES');
   const [expandedParlays, setExpandedParlays] = useState<Record<string, boolean>>({});
   const previousParlayCount = useRef(0);
+  const previousSelectionKey = useRef<string | null>(null);
 
   const isSinglesEmpty = !selection;
   const isParlayEmpty = parlaySelections.length === 0;
@@ -40,8 +56,40 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   const potentialPayout = selection ? stake * selection.option.odds : 0;
   const parlayPotentialPayout = stake * (parlaySelections.length ? parlaySelections.reduce((a, s) => a * s.option.odds, 1) : 0);
   const isAffordable = stake <= balance;
-  const singleBets = useMemo(() => activeBets.filter((b) => (b.betType ?? 'single') === 'single'), [activeBets]);
-  const parlayBets = useMemo(() => activeBets.filter((b) => b.betType === 'parlay'), [activeBets]);
+  // "Current" = still pending (game hasn't finalized yet). As soon as a bet
+  // settles via the realtime onSnapshot listener we want it OUT of the
+  // current section so the user sees a live transition from Current ->
+  // Recent Bets without a refresh.
+  const isPending = (b: Bet) => (b.status ?? 'PENDING') === 'PENDING';
+  const singleBets = useMemo(
+    () => activeBets.filter((b) => (b.betType ?? 'single') === 'single' && isPending(b)),
+    [activeBets],
+  );
+  const parlayBets = useMemo(
+    () => activeBets.filter((b) => b.betType === 'parlay' && isPending(b)),
+    [activeBets],
+  );
+
+  // Settled bets, newest-first by settledAt (fall back to placedAt for
+  // legacy rows that pre-date the settledAt write). Capped at 10 per tab
+  // to keep the slip from turning into a history page; the dedicated
+  // history view in DashboardView handles longer-term browsing.
+  const settledSortKey = (b: Bet) =>
+    (b.settledAt?.getTime?.() ?? b.placedAt.getTime());
+  const recentSingles = useMemo(
+    () => activeBets
+        .filter((b) => (b.betType ?? 'single') === 'single' && !isPending(b))
+        .sort((a, b) => settledSortKey(b) - settledSortKey(a))
+        .slice(0, 10),
+    [activeBets],
+  );
+  const recentParlays = useMemo(
+    () => activeBets
+        .filter((b) => b.betType === 'parlay' && !isPending(b))
+        .sort((a, b) => settledSortKey(b) - settledSortKey(a))
+        .slice(0, 10),
+    [activeBets],
+  );
 
   // Boosted payout display (profit doubled for double_payout)
   const boostedSinglePayout = useMemo(() => {
@@ -121,6 +169,17 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     previousParlayCount.current = parlaySelections.length;
   }, [parlaySelections.length]);
 
+  useEffect(() => {
+    if (!selection) {
+      previousSelectionKey.current = null;
+      return;
+    }
+    const key = `${selection.market.id}:${selection.option.id}`;
+    if (previousSelectionKey.current === key) return;
+    previousSelectionKey.current = key;
+    setTab('SINGLES');
+  }, [selection]);
+
   const setStakeFromInput = (raw: string) => {
     const cleaned = raw.replace(/[^\d.]/g, '');
     if (cleaned === '') {
@@ -170,6 +229,116 @@ export const BetSlip: React.FC<BetSlipProps> = ({
       </div>
   ) : null;
 
+  // Compute the actual amount returned to the wallet for a settled bet.
+  // Singles and non-reduced parlays use stored potentialPayout; reduced
+  // parlays (some legs pushed) get recomputed via computeParlayRollup so
+  // the slip never overstates winnings. Boost adjustments are not
+  // reflected here yet — see TODO when we surface boost-aware payouts.
+  const settledReturn = (bet: Bet): { kind: 'WON' | 'PUSH' | 'LOST' | 'VOID' | 'CANCELLED'; amount: number } => {
+    const status = (bet.status ?? 'PENDING').toUpperCase();
+    if (status === 'WON') {
+      if (bet.betType === 'parlay' && bet.parlayLegs?.length) {
+        const rollup = computeParlayRollup(bet.parlayLegs, bet.stake);
+        if (rollup.state === 'WON') return { kind: 'WON', amount: rollup.payout };
+      }
+      return { kind: 'WON', amount: bet.potentialPayout };
+    }
+    if (status === 'PUSH' || status === 'VOID' || status === 'CANCELLED') {
+      return { kind: status, amount: bet.stake };
+    }
+    return { kind: 'LOST', amount: 0 };
+  };
+
+  // Recent settled bets card — sibling of "Current Singles/Parlays" cards.
+  // Uses one component for both kinds so we don't duplicate empty-state /
+  // header / scroll-frame styling four times across the tab branches.
+  const RecentBetsCard: React.FC<{ title: string; bets: Bet[]; emptyText: string; kind: 'single' | 'parlay' }> =
+      ({ title, bets, emptyText, kind }) => (
+      <div className={`${cardClass} p-3.5`}>
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">{title}</p>
+          <div className="flex items-center gap-2">
+            {onViewAllHistory ? (
+                <button
+                    type="button"
+                    onClick={onViewAllHistory}
+                    className="text-[10px] font-bold uppercase tracking-wider text-violet-300 hover:text-violet-200 transition-colors"
+                >
+                  View all
+                </button>
+            ) : null}
+            <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{bets.length}</span>
+          </div>
+        </div>
+        {bets.length === 0 ? (
+            <p className="text-xs text-slate-500">{emptyText}</p>
+        ) : (
+            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+              {bets.map((bet) => {
+                const { kind: outcome, amount } = settledReturn(bet);
+                const tone =
+                    outcome === 'WON'  ? { row: 'border-l-emerald-500',  pill: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300', label: `Won $${amount.toFixed(2)}` } :
+                    outcome === 'LOST' ? { row: 'border-l-red-500',      pill: 'border-red-500/40 bg-red-500/15 text-red-300',           label: 'Lost' } :
+                    outcome === 'PUSH' ? { row: 'border-l-amber-500',    pill: 'border-amber-500/40 bg-amber-500/15 text-amber-300',     label: `Push $${amount.toFixed(2)}` } :
+                                          { row: 'border-l-slate-500',    pill: 'border-slate-500/40 bg-slate-500/15 text-slate-300',     label: outcome === 'VOID' ? 'Void' : 'Cancelled' };
+                return (
+                    <div key={bet.id} className={`rounded-xl border-l-4 ${tone.row} border-y border-r border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-900/70 p-2.5 shadow-[0_1px_0_rgba(148,163,184,0.12)_inset]`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-slate-100 truncate">{bet.optionLabel}</p>
+                          <p className="mt-0.5 text-[11px] text-slate-400 truncate">{bet.marketTitle}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.pill}`}>
+                          {tone.label}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-[11px]">
+                        <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-200">Stake ${bet.stake.toFixed(2)}</span>
+                        <span className="font-semibold text-slate-400">@ {bet.odds.toFixed(2)}</span>
+                      </div>
+                      {kind === 'parlay' && !!bet.parlayLegs?.length && (
+                          <>
+                            <button
+                                type="button"
+                                onClick={() => toggleParlayDetails(bet.id)}
+                                className="mt-1.5 text-[10px] font-semibold text-violet-300 hover:text-violet-200"
+                            >
+                              {expandedParlays[bet.id] ? 'hide legs' : `show ${bet.parlayLegs.length} legs`}
+                            </button>
+                            {expandedParlays[bet.id] && (
+                                <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="space-y-1.5">
+                                    {bet.parlayLegs.map((leg, idx) => {
+                                      const legResult = (leg.result ?? 'PENDING').toUpperCase();
+                                      const legColor =
+                                          legResult === 'WON'  ? 'text-emerald-300' :
+                                          legResult === 'LOST' ? 'text-red-300' :
+                                          legResult === 'PUSH' ? 'text-amber-300' :
+                                          legResult === 'VOID' ? 'text-slate-400' :
+                                                                  'text-slate-500';
+                                      return (
+                                          <div key={`${bet.id}-leg-${idx}`} className="flex items-center justify-between gap-2 rounded-md border border-slate-800/70 bg-slate-900/70 px-2 py-1.5">
+                                            <div className="min-w-0">
+                                              <p className="text-[10px] font-semibold text-slate-200 truncate">{leg.optionLabel}</p>
+                                              <p className="text-[9px] text-slate-500 truncate">{leg.marketTitle}</p>
+                                            </div>
+                                            <span className={`shrink-0 text-[9px] font-bold uppercase ${legColor}`}>{legResult}</span>
+                                          </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                            )}
+                          </>
+                      )}
+                    </div>
+                );
+              })}
+            </div>
+        )}
+      </div>
+  );
+
   return (
       <div className="fixed bottom-0 left-0 right-0 z-50 lg:static lg:z-auto lg:shrink-0 lg:w-[330px] lg:min-h-0 lg:h-full lg:overflow-y-auto lg:overscroll-contain animate-in slide-in-from-bottom lg:slide-in-from-right duration-300">
         <div className="betslip-shell mx-4 mb-4 flex min-h-0 flex-col lg:mx-0 lg:mb-0 lg:min-h-full rounded-t-2xl lg:rounded-none lg:h-full p-4 lg:px-4 lg:pb-4 lg:pt-5 shadow-2xl border-t border-violet-500/40 lg:border-t-0 lg:border-l border-slate-700/70 bg-[#171427]">
@@ -178,10 +347,27 @@ export const BetSlip: React.FC<BetSlipProps> = ({
               <span className="text-slate-300">Balance</span>
               <span className="font-bold text-violet-300">${balance.toFixed(2)}</span>
             </div>
-            <button type="button" className="text-slate-500 hover:text-slate-300 transition-colors" title="Close bet slip">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-slate-500 hover:text-slate-300 transition-colors"
+              title="Close bet slip"
+              aria-label="Close bet slip"
+            >
               <X size={16} />
             </button>
           </div>
+
+          {parlayRuleError ? (
+              <div
+                  role="alert"
+                  aria-live="polite"
+                  className="mb-3 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-300"
+              >
+                <AlertCircle size={11} />
+                {parlayRuleError}
+              </div>
+          ) : null}
 
           <div className="flex border-b border-slate-800 mb-2">
             {(['SINGLES', 'PARLAYS'] as const).map((t) => (
@@ -316,6 +502,12 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                       </div>
                   )}
                 </div>
+                <RecentBetsCard
+                    title="Recent Bets"
+                    bets={recentSingles}
+                    emptyText="No settled singles yet. Once a game ends, results land here."
+                    kind="single"
+                />
               </div>
           ) : tab === 'SINGLES' ? (
               <div className="mb-4 flex flex-col gap-3">
@@ -345,6 +537,12 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                       </div>
                   )}
                 </div>
+                <RecentBetsCard
+                    title="Recent Bets"
+                    bets={recentSingles}
+                    emptyText="No settled singles yet. Once a game ends, results land here."
+                    kind="single"
+                />
               </div>
           ) : null}
 
@@ -478,6 +676,12 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                       </div>
                   )}
                 </div>
+                <RecentBetsCard
+                    title="Recent Bets"
+                    bets={recentParlays}
+                    emptyText="No settled parlays yet. Once every leg finalizes, results land here."
+                    kind="parlay"
+                />
               </div>
           ) : tab === 'PARLAYS' ? (
               <div className="mb-4 flex flex-col gap-3">
@@ -526,6 +730,12 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                       </div>
                   )}
                 </div>
+                <RecentBetsCard
+                    title="Recent Bets"
+                    bets={recentParlays}
+                    emptyText="No settled parlays yet. Once every leg finalizes, results land here."
+                    kind="parlay"
+                />
               </div>
           ) : null}
         </div>

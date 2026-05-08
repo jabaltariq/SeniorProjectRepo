@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/index.js",
-    "seed:achievements": "node scripts/seed-achievement-definitions.js"
+    "seed:achievements": "node scripts/seed-achievement-definitions.js",
+    "test:parlay": "node --experimental-strip-types --no-warnings --test services/__tests__/parlayRollup.test.ts services/__tests__/parlayRules.test.ts"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

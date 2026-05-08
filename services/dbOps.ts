@@ -1,11 +1,48 @@
 import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, deleteDoc, Timestamp, runTransaction, deleteField, query, where, orderBy, limit, writeBatch, increment, QueryDocumentSnapshot, DocumentData, DocumentReference, addDoc } from "firebase/firestore";
 import { db } from "@/models/constants.ts";
 import {Bet, LeaderboardEntry, ParlayLeg, BetStatus, Friend, SocialActivity, HeadToHead, HeadToHeadStatus} from "@/models";
+import { PROFILE_BACKGROUND_URLS, profileBackgroundForUid } from "@/models/profileBackgrounds";
+import {
+    ANONYMOUS_PROFILE_AVATAR_PATH,
+    BESTBETTER_DEFAULT_AVATAR_PATH,
+    defaultAvatarForUid,
+    FATCAT97_DEFAULT_AVATAR_PATH,
+    isDefaultProfileAvatarPath,
+    MODE_TEST_DEFAULT_AVATAR_PATH,
+} from "@/models/defaultProfileAvatars";
 import {randomInt} from "node:crypto";
 
 export var currBets = new Array<Bet>;
 
 export var allBets = new Array<Bet>;
+
+const appPublicAsset = (path: string) => `/bethub/${path}`;
+const anonymousProfileAvatarUrl = appPublicAsset(ANONYMOUS_PROFILE_AVATAR_PATH);
+
+function resolveProfileAvatarUrl(uid: string, name: string, data: DocumentData): string {
+    const normalizedName = name.toLowerCase();
+    const defaultPath = normalizedName === "modetest"
+        ? MODE_TEST_DEFAULT_AVATAR_PATH
+        : normalizedName === "fatcat97"
+            ? FATCAT97_DEFAULT_AVATAR_PATH
+        : normalizedName === "bestbetter"
+            ? BESTBETTER_DEFAULT_AVATAR_PATH
+        : isDefaultProfileAvatarPath(data.defaultAvatarPath)
+            ? data.defaultAvatarPath
+            : defaultAvatarForUid(uid, name);
+
+    return appPublicAsset(defaultPath);
+}
+
+function resolveProfileBackgroundUrl(uid: string, name: string, data: DocumentData): string {
+    const normalizedName = name.toLowerCase();
+    if (normalizedName === "zoomerchud" || normalizedName === "fatcat97") {
+        return profileBackgroundForUid(uid, name);
+    }
+    return typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
+        ? data.profileBackgroundUrl
+        : profileBackgroundForUid(uid, name);
+}
 
 /**
  * Sets a specified user's username in Firestore
@@ -548,8 +585,21 @@ export async function saveUserMockNflGames(uid: string, games: MockNflGameState[
 }
 
 /**
- * Settles all pending bets for a finalized mock NFL game for one user.
- * This reuses the existing settleBet() path so wallet + win/loss + history
+ * Settles all pending bets affected by a finalized mock NFL game for one user.
+ *
+ * Two paths:
+ *   1. SINGLE bets whose `marketId === "mock-${game.id}"` settle immediately.
+ *      A pure tie on a moneyline / exact-line spread / exact total is treated
+ *      as a PUSH so the user's stake is refunded (the previous code voided
+ *      these silently with no money change, which deleted the stake).
+ *   2. PARLAY bets whose `parlayLegs[]` contain a leg pointing at this mock
+ *      game's market settle that leg via `recordParlayLegResult`. The roll-up
+ *      runs inside the transaction and only flips the bet to WON / LOST /
+ *      PUSH once every leg is decided. Until then it stays PENDING — which
+ *      is correct because non-mock legs (real API events) haven't been
+ *      graded yet.
+ *
+ * Reuses `settleBet` / `recordParlayLegResult` so wallet + win/loss + history
  * stay consistent with normal markets.
  */
 export async function settleUserMockNflGameBets(
@@ -561,10 +611,6 @@ export async function settleUserMockNflGameBets(
     if (game.awayScore == null || game.homeScore == null) return;
 
     const marketId = `mock-${game.id}`;
-    const pending = (await getBets(uid)).filter(
-        (b) => b.marketId === marketId && (b.status ?? "PENDING") === "PENDING",
-    );
-    if (pending.length === 0) return;
 
     const awayTeam = game.awayTeam;
     const homeTeam = game.homeTeam;
@@ -576,48 +622,77 @@ export async function settleUserMockNflGameBets(
     const margin = game.awayScore - game.homeScore;
     const totalScore = game.awayScore + game.homeScore;
 
-    const outcomeFor = (optionLabel: string): "WON" | "LOST" | "VOID" => {
+    /**
+     * Returns the raw outcome for a given option label.
+     * "VOID" means the label was unrecognized for this market.
+     * "PUSH" means it was recognized but landed exactly on the line / tied.
+     */
+    const outcomeFor = (optionLabel: string): "WON" | "LOST" | "PUSH" | "VOID" => {
         const selected = optionLabel.trim();
 
         // Moneyline
         if (selected === awayTeam) {
-            if (game.awayScore === game.homeScore) return "VOID";
+            if (game.awayScore === game.homeScore) return "PUSH";
             return game.awayScore > game.homeScore ? "WON" : "LOST";
         }
         if (selected === homeTeam) {
-            if (game.awayScore === game.homeScore) return "VOID";
+            if (game.awayScore === game.homeScore) return "PUSH";
             return game.homeScore > game.awayScore ? "WON" : "LOST";
         }
 
         // Spread
         if (selected === awaySpreadLabel) {
             const result = margin + game.spreadLine;
-            if (result === 0) return "VOID";
+            if (result === 0) return "PUSH";
             return result > 0 ? "WON" : "LOST";
         }
         if (selected === homeSpreadLabel) {
             const result = -margin - game.spreadLine;
-            if (result === 0) return "VOID";
+            if (result === 0) return "PUSH";
             return result > 0 ? "WON" : "LOST";
         }
 
         // Totals
         if (selected === overLabel) {
-            if (totalScore === game.totalLine) return "VOID";
+            if (totalScore === game.totalLine) return "PUSH";
             return totalScore > game.totalLine ? "WON" : "LOST";
         }
         if (selected === underLabel) {
-            if (totalScore === game.totalLine) return "VOID";
+            if (totalScore === game.totalLine) return "PUSH";
             return totalScore < game.totalLine ? "WON" : "LOST";
         }
 
-        // Unknown/legacy label for this mock market: void it safely.
+        // Unknown/legacy label for this mock market: void it safely so the
+        // user gets their stake back rather than losing it.
         return "VOID";
     };
 
+    const pending = (await getBets(uid)).filter(
+        (b) => (b.status ?? "PENDING") === "PENDING",
+    );
+    if (pending.length === 0) return;
+
     await Promise.all(
         pending.map(async (bet) => {
-            await settleBet(bet, outcomeFor(bet.optionLabel));
+            if (bet.betType === "parlay") {
+                const legs = bet.parlayLegs ?? [];
+                for (let idx = 0; idx < legs.length; idx++) {
+                    const leg = legs[idx];
+                    if (leg.marketId !== marketId) continue;
+                    if (leg.result && leg.result !== "PENDING") continue; // already decided
+                    const result = outcomeFor(leg.optionLabel);
+                    // A parlay leg that we can't recognize for this market is
+                    // recorded as VOID — `computeParlayRollup` treats that the
+                    // same as PUSH (drops the leg from the payout).
+                    await recordParlayLegResult(bet.id, idx, result);
+                }
+                return;
+            }
+
+            // Single bet on this exact mock market.
+            if (bet.marketId === marketId) {
+                await settleBet(bet, outcomeFor(bet.optionLabel));
+            }
         }),
     );
 }
@@ -941,16 +1016,36 @@ export async function getPendingBets(): Promise<Bet[]> {
 }
 
 /**
- * Marks a bet as WON, LOST, or VOID and updates the user's wallet and record atomically.
- * Called by the settlement service after a game is confirmed completed.
+ * Marks a bet as WON / LOST / PUSH / VOID / CANCELLED and updates the user's
+ * wallet and record atomically. Called by the settlement service after a game
+ * is confirmed completed, and by the parlay roll-up below.
+ *
+ * Status semantics:
+ *   WON       — pays `payoutOverride ?? bet.potentialPayout`, wins++.
+ *   LOST      — losses++ (money_back boost refunds stake).
+ *   PUSH      — refund stake (no wins/losses change).
+ *   VOID      — refund stake (no wins/losses change). Used for malformed/
+ *               unsettleable bets where we want money back but no record hit.
+ *   CANCELLED — same money behavior as VOID (refund stake), but a different
+ *               label for cases where a bet was administratively pulled.
  *
  * Boost effects:
  *   double_payout — on a WIN, pays (potentialPayout - stake) extra (doubles the profit)
  *   money_back    — on a LOSS, refunds the stake in full
  * Free bets (isFree: true) pay out stake + profit on a win since nothing was deducted on placement.
- * Free bets that are LOST or VOID require no money change since nothing was deducted.
+ * Free bets that are LOST / PUSH / VOID / CANCELLED require no money change since
+ * nothing was deducted on placement.
+ *
+ * @param payoutOverride Optional explicit WON payout. Used by the parlay
+ *   roll-up to pay a reduced amount when one or more legs pushed (DraftKings
+ *   style: drop pushed legs, recompute payout = stake × Π(remaining odds)).
+ *   Ignored for non-WON results.
  */
-export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Promise<void> {
+export async function settleBet(
+    bet: Bet,
+    result: "WON" | "LOST" | "PUSH" | "VOID" | "CANCELLED",
+    payoutOverride?: number,
+): Promise<void> {
     const batch = writeBatch(db);
 
     // 1. Update bet status
@@ -961,14 +1056,17 @@ export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Prom
 
     // 2. Update user wallet and record
     const userRef = doc(db, "userInfo", bet.userID);
-    const boost = (bet as any).boostApplied as BoostType | null ?? null;
+    const boost: BoostType | null = bet.boostApplied ?? null;
 
     if (result === "WON") {
-        let payout = bet.potentialPayout;
-        // double_payout: add the profit again (doubles profit, not stake)
+        const basePayout = (typeof payoutOverride === "number" && Number.isFinite(payoutOverride))
+            ? payoutOverride
+            : bet.potentialPayout;
+        let payout = basePayout;
+        // double_payout: add the (override-relative) profit again
         if (boost === 'double_payout' && !bet.isFree) {
-            const profit = bet.potentialPayout - bet.stake;
-            payout = bet.potentialPayout + profit;
+            const profit = basePayout - bet.stake;
+            payout = basePayout + profit;
         }
         batch.update(userRef, {
             money: increment(payout),
@@ -986,10 +1084,166 @@ export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Prom
                 losses: increment(1),
             });
         }
+    } else if (result === "PUSH" || result === "VOID" || result === "CANCELLED") {
+        // Refund stake (no wins/losses change). Free bets had no debit, so skip.
+        if (!bet.isFree) {
+            batch.update(userRef, {
+                money: increment(bet.stake),
+            });
+        }
     }
-    // VOID: cancelled — no payout, no win/loss recorded
 
     await batch.commit();
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  PARLAY ROLL-UP
+// ─────────────────────────────────────────────────────────────────
+// Pure roll-up logic + types live in ./parlayRollup so unit tests don't
+// have to drag in the firebase SDK.
+import { computeParlayRollup } from "./parlayRollup";
+export { computeParlayRollup } from "./parlayRollup";
+export type { ParlayLegResult, ParlayRollup } from "./parlayRollup";
+
+/**
+ * Updates a single parlay leg's result and, if the bet is now fully decided,
+ * settles it via `settleBet` — all atomically.
+ *
+ * Idempotent:
+ *   - If `bet.status !== 'PENDING'`, no-op (already settled).
+ *   - If the targeted leg already has a non-PENDING result, no-op.
+ *
+ * Called by the mock NFL settlement path and (eventually) the API settlement
+ * cron once each leg's underlying event finalizes.
+ */
+export async function recordParlayLegResult(
+    betId: string,
+    legIndex: number,
+    legResult: 'WON' | 'LOST' | 'PUSH' | 'VOID',
+): Promise<void> {
+    await runTransaction(db, async (transaction) => {
+        const betRef = doc(db, "bets", betId);
+        const snap = await transaction.get(betRef);
+        if (!snap.exists()) return;
+
+        const data = snap.data();
+        const status = (data.status ?? "PENDING") as BetStatus;
+        if (status !== "PENDING") return; // already settled — idempotent no-op
+
+        const rawLegs = Array.isArray(data.parlayLegs) ? data.parlayLegs : [];
+        if (legIndex < 0 || legIndex >= rawLegs.length) return;
+
+        const targetLeg = rawLegs[legIndex];
+        const currentLegResult = (targetLeg?.result ?? 'PENDING') as string;
+        if (currentLegResult !== 'PENDING') return; // leg already decided — no-op
+
+        // Write the per-leg result.
+        const nextLegs = rawLegs.map((leg: any, idx: number) => {
+            if (idx !== legIndex) return leg;
+            return { ...leg, result: legResult };
+        });
+        transaction.update(betRef, { parlayLegs: nextLegs });
+
+        // Now decide whether the whole bet rolls up.
+        const stake = Number(data.stake) || 0;
+        const rollup = computeParlayRollup(nextLegs, stake);
+        if (rollup.state === 'PENDING') return;
+
+        // Final write: status + wallet + wins/losses, all in this same txn.
+        const userRef = doc(db, "userInfo", String(data.userID ?? ""));
+        const boost = (data.boostApplied as BoostType | null) ?? null;
+        const isFree = data.isFree === true;
+
+        transaction.update(betRef, {
+            status:    rollup.state,
+            settledAt: Timestamp.now(),
+        });
+
+        if (rollup.state === 'WON') {
+            let payout = rollup.payout;
+            if (boost === 'double_payout' && !isFree) {
+                const profit = rollup.payout - stake;
+                payout = rollup.payout + profit;
+            }
+            transaction.update(userRef, {
+                money: increment(payout),
+                wins:  increment(1),
+            });
+        } else if (rollup.state === 'LOST') {
+            if (boost === 'money_back' && !isFree) {
+                transaction.update(userRef, {
+                    money:  increment(stake),
+                    losses: increment(1),
+                });
+            } else {
+                transaction.update(userRef, { losses: increment(1) });
+            }
+        } else if (rollup.state === 'PUSH') {
+            if (!isFree) {
+                transaction.update(userRef, { money: increment(stake) });
+            }
+        }
+    });
+}
+
+/**
+ * Re-evaluates a parlay bet's current legs and settles it if all legs are
+ * decided. Useful when something other than `recordParlayLegResult` updated
+ * legs (e.g. a backfill script), or to nudge a bet whose final-leg write
+ * failed mid-flight.
+ *
+ * Idempotent: no-op when the bet is already settled or still has PENDING legs.
+ */
+export async function settleParlayBetIfReady(betId: string): Promise<void> {
+    await runTransaction(db, async (transaction) => {
+        const betRef = doc(db, "bets", betId);
+        const snap = await transaction.get(betRef);
+        if (!snap.exists()) return;
+
+        const data = snap.data();
+        const status = (data.status ?? "PENDING") as BetStatus;
+        if (status !== "PENDING") return;
+        if (data.betType !== "parlay") return;
+
+        const legs = Array.isArray(data.parlayLegs) ? data.parlayLegs : [];
+        const stake = Number(data.stake) || 0;
+        const rollup = computeParlayRollup(legs, stake);
+        if (rollup.state === 'PENDING') return;
+
+        const userRef = doc(db, "userInfo", String(data.userID ?? ""));
+        const boost = (data.boostApplied as BoostType | null) ?? null;
+        const isFree = data.isFree === true;
+
+        transaction.update(betRef, {
+            status:    rollup.state,
+            settledAt: Timestamp.now(),
+        });
+
+        if (rollup.state === 'WON') {
+            let payout = rollup.payout;
+            if (boost === 'double_payout' && !isFree) {
+                const profit = rollup.payout - stake;
+                payout = rollup.payout + profit;
+            }
+            transaction.update(userRef, {
+                money: increment(payout),
+                wins:  increment(1),
+            });
+        } else if (rollup.state === 'LOST') {
+            if (boost === 'money_back' && !isFree) {
+                transaction.update(userRef, {
+                    money:  increment(stake),
+                    losses: increment(1),
+                });
+            } else {
+                transaction.update(userRef, { losses: increment(1) });
+            }
+        } else if (rollup.state === 'PUSH') {
+            if (!isFree) {
+                transaction.update(userRef, { money: increment(stake) });
+            }
+        }
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1182,7 +1436,9 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
             id:            docSnap.id,
             name,
             avatar:        name.slice(0, 2).toUpperCase(),
-            netWorth:      money,
+            avatarUrl:     resolveProfileAvatarUrl(docSnap.id, name, data),
+            profileBackgroundUrl: resolveProfileBackgroundUrl(docSnap.id, name, data),
+            netWorth:      Math.round(money),
             winRate,
             rank:          1,
             isCurrentUser: false,
@@ -1225,6 +1481,8 @@ export type AccountProfile = {
     name: string;
     email?: string;
     avatar: string;
+    defaultAvatarPath?: string;
+    profileBackgroundUrl?: string;
     netWorth: number;
     wins: number;
     losses: number;
@@ -1240,8 +1498,8 @@ const DEFAULT_ACCOUNT_DISPLAY: AccountDisplayConfig = {
     bets: [],
 };
 
-function uniqueStrings(values: string[]): string[] {
-    return Array.from(new Set(values));
+function uniqueStrings<T extends string>(values: T[]): T[] {
+    return Array.from(new Set(values)) as T[];
 }
 
 function normalizeAccountDisplay(value: unknown, legacySections?: unknown): AccountDisplayConfig {
@@ -1308,7 +1566,21 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
         name,
         email: typeof data.email === "string" ? data.email : undefined,
         avatar: name.slice(0, 2).toUpperCase(),
-        netWorth: Number(data.money) || 0,
+        defaultAvatarPath: name.toLowerCase() === "modetest"
+            ? MODE_TEST_DEFAULT_AVATAR_PATH
+            : name.toLowerCase() === "fatcat97"
+                ? FATCAT97_DEFAULT_AVATAR_PATH
+            : name.toLowerCase() === "bestbetter"
+                ? BESTBETTER_DEFAULT_AVATAR_PATH
+            : isDefaultProfileAvatarPath(data.defaultAvatarPath)
+                ? data.defaultAvatarPath
+                : undefined,
+        profileBackgroundUrl: name.toLowerCase() === "zoomerchud" || name.toLowerCase() === "fatcat97"
+            ? profileBackgroundForUid(uid, name)
+            : typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
+            ? data.profileBackgroundUrl
+            : undefined,
+        netWorth: Math.round(Number(data.money) || 0),
         wins,
         losses,
         winRate,
@@ -1316,6 +1588,37 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
         unlockedAchievements,
         profileDisplay,
     };
+}
+
+export async function setUserProfileBackground(uid: string, imageUrl: string): Promise<void> {
+    if (!PROFILE_BACKGROUND_URLS.includes(imageUrl as typeof PROFILE_BACKGROUND_URLS[number])) return;
+    await setDoc(doc(db, "userInfo", uid), {
+        profileBackgroundUrl: imageUrl,
+    }, { merge: true });
+}
+
+export async function getUserProfileSummary(uid: string): Promise<Friend | null> {
+    const snap = await getDoc(doc(db, "userInfo", uid));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    const name = typeof data["name"] === "string" && data["name"].trim() ? data["name"].trim() : "Unknown";
+    return {
+        id: uid,
+        name,
+        avatar: name.slice(0, 2).toUpperCase(),
+        avatarUrl: resolveProfileAvatarUrl(uid, name, data),
+        profileBackgroundUrl: resolveProfileBackgroundUrl(uid, name, data),
+        status: "online",
+        lastActive: "Now",
+        privacyEnabled: data["privacy"] === true,
+    };
+}
+
+export async function setUserDefaultProfileAvatar(uid: string, avatarPath: string): Promise<void> {
+    if (!isDefaultProfileAvatarPath(avatarPath)) return;
+    await setDoc(doc(db, "userInfo", uid), {
+        defaultAvatarPath: avatarPath,
+    }, { merge: true });
 }
 
 export async function getAchievementDefinitions(): Promise<AchievementDefinition[]> {
@@ -1470,6 +1773,8 @@ async function buildCommunityActivity(
         const rawName = typeof userData["name"] === "string" ? userData["name"] : "";
         const userName = isPrivate || !rawName ? "Anonymous User" : rawName;
         const userAvatar = isPrivate || !rawName ? "?" : rawName.slice(0, 2);
+        const userAvatarUrl = isPrivate || !rawName ? anonymousProfileAvatarUrl : resolveProfileAvatarUrl(uid, rawName, userData);
+        const userProfileBackgroundUrl = isPrivate || !rawName ? undefined : resolveProfileBackgroundUrl(uid, rawName, userData);
 
         const placedAtRaw    = data["placedAt"]      as Timestamp | undefined;
         const eventStartsRaw = data["eventStartsAt"] as Timestamp | undefined;
@@ -1501,6 +1806,8 @@ async function buildCommunityActivity(
             userId:    uid,
             userName,
             userAvatar,
+            userAvatarUrl,
+            userProfileBackgroundUrl,
             action:    isParlay ? "placed a parlay on" : "placed a bet on",
             target:    String(data["marketTitle"] ?? ""),
             timestamp: formatActivityTimestamp(placedAtDate),
@@ -1845,6 +2152,8 @@ export function subscribeToFriends(
                             id: friendUid,
                             name,
                             avatar: name.slice(0, 2),
+                            avatarUrl: resolveProfileAvatarUrl(friendUid, name, friendData),
+                            profileBackgroundUrl: resolveProfileBackgroundUrl(friendUid, name, friendData),
                             status: 'online',
                             lastActive: "dont care",
                             privacyEnabled: friendData["privacy"] === true,
@@ -1878,6 +2187,145 @@ export function subscribeToFriends(
     };
 }
 
+// ─────────────────────────────────────────────────────────────────
+//  DIRECT MESSAGES (1:1 chat) — additive, isolated from betting flows
+// ─────────────────────────────────────────────────────────────────
+
+export interface DirectMessage {
+    id: string;
+    threadId: string;
+    fromUserId: string;
+    toUserId: string;
+    text: string;
+    createdAtMs: number;
+}
+
+export interface SendDirectMessageInput {
+    threadId: string;
+    messageId: string; // caller-provided so UI can be optimistic without duplicates
+    fromUserId: string;
+    toUserId: string;
+    text: string;
+    createdAtMs?: number;
+}
+
+/**
+ * Subscribes to messages for a given DM thread.
+ *
+ * Storage layout:
+ *   dmThreads/{threadId}/messages/{messageId}
+ *
+ * Using a subcollection avoids composite indexes and keeps blast radius low.
+ */
+export function subscribeToDirectMessages(
+    threadId: string | null | undefined,
+    onUpdate: (messages: DirectMessage[]) => void,
+    onError?: (err: Error) => void,
+    limitCount: number = 200,
+): () => void {
+    if (!threadId) {
+        onUpdate([]);
+        return () => {};
+    }
+
+    const q = query(
+        collection(db, "dmThreads", threadId, "messages"),
+        orderBy("createdAtMs", "asc"),
+        limit(limitCount),
+    );
+
+    const unsub = onSnapshot(
+        q,
+        (snapshot) => {
+            const rows: DirectMessage[] = snapshot.docs.map((d) => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    threadId,
+                    fromUserId: String(data["fromUserId"] ?? ""),
+                    toUserId: String(data["toUserId"] ?? ""),
+                    text: String(data["text"] ?? ""),
+                    createdAtMs: Number(data["createdAtMs"] ?? 0) || 0,
+                };
+            });
+            onUpdate(rows);
+        },
+        (err) => {
+            if (onError) onError(err);
+            else console.error("subscribeToDirectMessages onSnapshot failed", err);
+        },
+    );
+
+    return () => unsub();
+}
+
+/**
+ * Sends a direct message. Writes the message doc and updates the parent thread
+ * doc (participants + last message metadata) via merge writes.
+ */
+export async function sendDirectMessage(input: SendDirectMessageInput): Promise<{ success: true } | { success: false; error: string }> {
+    const { threadId, messageId, fromUserId, toUserId } = input;
+    const text = (input.text ?? "").trim();
+    if (!threadId || !messageId || !fromUserId || !toUserId) {
+        return { success: false, error: "MISSING_FIELDS" };
+    }
+    if (!text) {
+        return { success: false, error: "EMPTY_MESSAGE" };
+    }
+    const createdAtMs = Number(input.createdAtMs ?? Date.now());
+
+    try {
+        const threadRef = doc(db, "dmThreads", threadId);
+        const messageRef = doc(db, "dmThreads", threadId, "messages", messageId);
+
+        await Promise.all([
+            setDoc(messageRef, { threadId, fromUserId, toUserId, text, createdAtMs }, { merge: false }),
+            setDoc(threadRef, {
+                participants: [fromUserId, toUserId],
+                updatedAtMs: createdAtMs,
+                lastMessageText: text.slice(0, 220),
+                lastMessageAtMs: createdAtMs,
+            }, { merge: true }),
+        ]);
+
+        return { success: true };
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : "UNKNOWN";
+        console.error("sendDirectMessage failed", e);
+        return { success: false, error: msg };
+    }
+}
+
+/**
+ * Deletes a message only if the acting user is the sender.
+ * NOTE: Client-side guard only; Firestore security rules should enforce too.
+ */
+export async function deleteDirectMessage(
+    threadId: string,
+    messageId: string,
+    actingUserId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+    if (!threadId || !messageId || !actingUserId) return { success: false, error: "MISSING_FIELDS" };
+
+    const messageRef = doc(db, "dmThreads", threadId, "messages", messageId);
+    try {
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(messageRef);
+            if (!snap.exists()) return;
+            const data = snap.data();
+            const fromUserId = String((data as DocumentData)["fromUserId"] ?? "");
+            if (fromUserId !== actingUserId) {
+                throw new Error("NOT_OWNER");
+            }
+            tx.delete(messageRef);
+        });
+        return { success: true };
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : "UNKNOWN";
+        return { success: false, error: msg };
+    }
+}
+
 export async function getFriends(uid : string) : Promise<Friend[]> {
     const documentReference = doc(db, "userInfo", uid);
     const documentSnapshot = await getDoc(documentReference);
@@ -1901,6 +2349,8 @@ export async function getFriends(uid : string) : Promise<Friend[]> {
                     id: friend,
                     name: friendData["name"],
                     avatar: friendData["name"].slice(0, 2),
+                    avatarUrl: resolveProfileAvatarUrl(friend, friendData["name"], friendData),
+                    profileBackgroundUrl: resolveProfileBackgroundUrl(friend, friendData["name"], friendData),
                     status: 'online',
                     lastActive: "dont care",
                     privacyEnabled: false
@@ -1909,6 +2359,56 @@ export async function getFriends(uid : string) : Promise<Friend[]> {
         }
     }
     return friendsList;
+}
+
+export interface UserSearchResult {
+    uid: string;
+    name: string;
+    privacyEnabled: boolean;
+    avatarUrl?: string;
+    profileBackgroundUrl?: string;
+}
+
+/**
+ * Lightweight username search for friend discovery.
+ * Frontend-first implementation: scans userInfo docs and filters in memory.
+ * Safe for small/medium datasets; can be replaced with indexed query later.
+ */
+export async function searchUsersByNamePrefix(
+    queryText: string,
+    currentUid: string | null | undefined,
+    limitCount: number = 8,
+): Promise<UserSearchResult[]> {
+    const q = (queryText ?? "").trim().toLowerCase();
+    if (!q) return [];
+
+    const snapshot = await getDocs(collection(db, "userInfo"));
+    const rows: UserSearchResult[] = [];
+
+    for (const docSnap of snapshot.docs) {
+        if (rows.length >= limitCount) break;
+        const uid = docSnap.id;
+        if (currentUid && uid === currentUid) continue;
+        const data = docSnap.data();
+        const name = typeof data["name"] === "string" ? data["name"].trim() : "";
+        if (!name) continue;
+        if (!name.toLowerCase().includes(q)) continue;
+        rows.push({
+            uid,
+            name,
+            privacyEnabled: data["privacy"] === true,
+            avatarUrl: resolveProfileAvatarUrl(uid, name, data),
+            profileBackgroundUrl: resolveProfileBackgroundUrl(uid, name, data),
+        });
+    }
+
+    // Stable-ish relevance: startsWith first, then alphabetical.
+    return rows.sort((a, b) => {
+        const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+        const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return a.name.localeCompare(b.name);
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────

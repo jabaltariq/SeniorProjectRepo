@@ -55,9 +55,7 @@ export const StoreView: React.FC<StoreViewProps> = ({ balance, currentUserId }) 
             <ShoppingBag className="text-violet-400" size={24} /> Store
           </h2>
           <p className="text-slate-400 text-sm mt-1 max-w-xl">
-            Spend your wallet on profile pictures that show up on your account page,
-            in the leaderboard, and across the friends feed. New looks land here
-            regularly — check back often.
+            Shop some profile pictures that represent you. New looks update every season.
           </p>
         </div>
         <div className="inline-flex items-center gap-2 self-start rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300">
@@ -105,8 +103,7 @@ export const StoreView: React.FC<StoreViewProps> = ({ balance, currentUserId }) 
       )}
 
       <p className="mt-8 text-xs text-slate-500 leading-relaxed">
-        Avatars are cosmetic only &mdash; they don&apos;t affect odds, payouts, or
-        leaderboard rank. The free starter ({findName(STARTER_AVATAR_ID)})
+        Avatars are cosmetic only. The free starter ({findName(STARTER_AVATAR_ID)})
         is automatically owned by every account.
       </p>
     </div>

@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
   Wallet as WalletIcon,
   Home,
   BarChart3,
-  History,
+  Receipt,
   Gamepad2,
   Search,
   Users,
@@ -26,7 +26,7 @@ import {
 import { MarketType, type Market, type MarketOption, type Bet } from '../models';
 import { BetSlip } from '../components/BetSlip';
 import { Leaderboard } from '../components/Leaderboard';
-import { SocialView } from '../components/SocialView';
+import { SocialMessagingView } from '../components/SocialMessagingView';
 import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
 import { BetOfTheDayCard } from '../components/Betofthedaycard';
@@ -43,6 +43,8 @@ import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForCha
 import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
+import { computeParlayRollup } from '@/services/parlayRollup';
+import { WinCelebrationModal } from '../components/WinCelebrationModal';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
 
@@ -86,6 +88,9 @@ interface DashboardViewProps {
   parlaySelections: Array<{ market: Market; option: MarketOption }>;
   dailyBonusAvailable: boolean;
   bonusMessage: string | null;
+  /** Inline error from strict-parlay rules (max legs / both-sides). Surfaced
+   *  by the BetSlip; auto-clears in the viewModel. */
+  parlayRuleError: string | null;
   view: string;
   userInitials: string;
   userEmail: string;
@@ -132,6 +137,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     parlaySelections,
     dailyBonusAvailable,
     bonusMessage,
+    parlayRuleError,
     userInitials,
     userEmail,
     sportFilter,
@@ -170,8 +176,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const isLightMode = themeMode === 'light';
   const [promotionsOpen, setPromotionsOpen] = useState(false);
   const [mockNflGames, setMockNflGames] = useState<MockNflGameState[]>([]);
+  const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
+  const [pendingWinBets, setPendingWinBets] = useState<Bet[]>([]);
+  const [activeWinBet, setActiveWinBet] = useState<Bet | null>(null);
+  const seenWinningBetIds = useRef<Set<string>>(new Set());
+  const hasInitializedWinTracking = useRef(false);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
+  const seenWinningBetsStorageKey = userUid ? `bethub_seen_winning_bets:${userUid}` : '';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -307,22 +319,159 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     // Remove any finalized mock legs from active selection state so users
     // cannot place singles/parlays on games that already ended.
     const staleSelections = parlaySelections.filter((sel) => finalizedMockMarketIds.has(sel.market.id));
+    const staleSelectionKeys = new Set(
+      staleSelections.map((sel) => `${sel.market.id}:${sel.option.id}`),
+    );
     for (const stale of staleSelections) {
       onSelectBet(stale.market, stale.option);
     }
 
     if (betSelection && finalizedMockMarketIds.has(betSelection.market.id)) {
-      onSelectBet(betSelection.market, betSelection.option);
+      const selectedKey = `${betSelection.market.id}:${betSelection.option.id}`;
+      // If this selection was already removed via staleSelections above, do not
+      // toggle it a second time (second toggle would re-add it).
+      if (!staleSelectionKeys.has(selectedKey)) {
+        onSelectBet(betSelection.market, betSelection.option);
+      }
     }
   }, [mockNflGames, parlaySelections, betSelection, onSelectBet]);
 
   // ── Boost state — lives here so BetSlip and BoostsCard share it ─
   const [activeBoost, setActiveBoost] = useState<BoostType | null>(null);
 
+  // ── History page filters ───────────────────────────────────────
+  // State lives at the component top (not inside the HISTORY case) because
+  // hooks can't be called conditionally. Keeps filter selections sticky as
+  // the user toggles between views, which matches typical sportsbook UX.
+  type HistorySort = 'recent' | 'oldest' | 'stake_desc' | 'payout_desc';
+  const [historySort, setHistorySort] = useState<HistorySort>('recent');
+  const [historyStatusSet, setHistoryStatusSet] = useState<Set<string>>(() => new Set());
+  const [historyYear, setHistoryYear] = useState<number | 'all'>('all');
+  const [historyMinStake, setHistoryMinStake] = useState<number>(0);
+  const [historyMaxStake, setHistoryMaxStake] = useState<number | null>(null);
+
+  // Distinct years the user has bet in. Always derived from the realtime
+  // activeBets list so newly-placed bets in fresh years show up automatically.
+  const historyYears = useMemo(() => {
+    const years = new Set<number>();
+    props.activeBets.forEach((b) => years.add(b.placedAt.getFullYear()));
+    return Array.from(years).sort((a, b) => b - a);
+  }, [props.activeBets]);
+
+  // Slider upper bound — defaults to $1000, but if a user has bets larger
+  // than that we bump the bound up to the nearest $100 so they can still
+  // filter their high rollers. Step on the slider itself is 1 so every
+  // dollar between 0 and the bound is selectable.
+  const historyMaxStakeBound = useMemo(() => {
+    const observed = props.activeBets.reduce((acc, b) => Math.max(acc, b.stake), 0);
+    return Math.max(1000, Math.ceil(observed / 100) * 100);
+  }, [props.activeBets]);
+
+  const filteredHistoryBets = useMemo(() => {
+    const list = props.activeBets.filter((b) => {
+      if (historyStatusSet.size > 0) {
+        const s = (b.status ?? 'PENDING').toLowerCase();
+        if (!historyStatusSet.has(s)) return false;
+      }
+      if (historyYear !== 'all' && b.placedAt.getFullYear() !== historyYear) return false;
+      if (b.stake < historyMinStake) return false;
+      if (historyMaxStake !== null && b.stake > historyMaxStake) return false;
+      return true;
+    });
+    switch (historySort) {
+      case 'oldest':      return list.sort((a, b) => a.placedAt.getTime() - b.placedAt.getTime());
+      case 'stake_desc':  return list.sort((a, b) => b.stake - a.stake);
+      case 'payout_desc': return list.sort((a, b) => b.potentialPayout - a.potentialPayout);
+      case 'recent':
+      default:            return list.sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime());
+    }
+  }, [props.activeBets, historyStatusSet, historyYear, historyMinStake, historyMaxStake, historySort]);
+
+  const toggleHistoryStatus = (status: string) =>
+    setHistoryStatusSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+
+  const resetHistoryFilters = () => {
+    setHistorySort('recent');
+    setHistoryStatusSet(new Set());
+    setHistoryYear('all');
+    setHistoryMinStake(0);
+    setHistoryMaxStake(null);
+  };
+
+  const hasActiveHistoryFilters =
+    historyStatusSet.size > 0 ||
+    historyYear !== 'all' ||
+    historyMinStake > 0 ||
+    historyMaxStake !== null ||
+    historySort !== 'recent';
+
   const handlePlaceBetWithBoost = (stake: number, betType?: 'single' | 'parlay') => {
     console.log('handlePlaceBetWithBoost called, activeBoost:', activeBoost);
     onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null));
   };
+
+  useEffect(() => {
+    if (betSelection || parlaySelections.length > 0) {
+      setIsBetSlipCollapsed(false);
+    }
+  }, [betSelection, parlaySelections.length]);
+
+  useEffect(() => {
+    seenWinningBetIds.current = new Set();
+    hasInitializedWinTracking.current = false;
+    setPendingWinBets([]);
+    setActiveWinBet(null);
+  }, [userUid]);
+
+  useEffect(() => {
+    if (!userUid) return;
+    if (props.activeBets.length === 0 && !hasInitializedWinTracking.current) return;
+
+    const readStoredSeenIds = () => {
+      if (typeof localStorage === 'undefined' || !seenWinningBetsStorageKey) return new Set<string>();
+      try {
+        const raw = localStorage.getItem(seenWinningBetsStorageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+      } catch {
+        return new Set<string>();
+      }
+    };
+
+    const writeStoredSeenIds = (ids: Set<string>) => {
+      if (typeof localStorage === 'undefined' || !seenWinningBetsStorageKey) return;
+      localStorage.setItem(seenWinningBetsStorageKey, JSON.stringify(Array.from(ids)));
+    };
+
+    const winningBets = props.activeBets.filter((bet) => (bet.status ?? 'PENDING') === 'WON');
+    if (!hasInitializedWinTracking.current) {
+      const storedSeen = readStoredSeenIds();
+      winningBets.forEach((bet) => storedSeen.add(bet.id));
+      seenWinningBetIds.current = storedSeen;
+      writeStoredSeenIds(storedSeen);
+      hasInitializedWinTracking.current = true;
+      return;
+    }
+
+    const unseen = winningBets.filter((bet) => !seenWinningBetIds.current.has(bet.id));
+    if (unseen.length === 0) return;
+
+    unseen.forEach((bet) => seenWinningBetIds.current.add(bet.id));
+    writeStoredSeenIds(seenWinningBetIds.current);
+    setPendingWinBets((prev) => [...prev, ...unseen]);
+  }, [props.activeBets, seenWinningBetsStorageKey, userUid]);
+
+  useEffect(() => {
+    if (activeWinBet || pendingWinBets.length === 0) return;
+    const [next, ...rest] = pendingWinBets;
+    setActiveWinBet(next);
+    setPendingWinBets(rest);
+  }, [activeWinBet, pendingWinBets]);
 
 
   // ── Grab uid once for sidebar cards ────────────────────────────
@@ -526,8 +675,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return (
             <div className="animate-in fade-in duration-500 flex min-h-0 w-full flex-1 flex-col">
               <HomeLanding
-                dailyBonusAvailable={dailyBonusAvailable}
-                onDailyBonus={onDailyBonus}
                 onLogout={onLogout}
                 isLightMode={isLightMode}
               />
@@ -536,7 +683,17 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'LEADERBOARD':
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
-        return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} userPrivacy={userPrivacy} friendRequests={friendReqs} userName={userName}/>;
+        return (
+          <SocialMessagingView
+            friends={friends}
+            activities={activity}
+            onChallenge={onChallenge}
+            bets={betList}
+            userPrivacy={userPrivacy}
+            friendRequests={friendReqs}
+            userName={userName}
+          />
+        );
         
       case 'PROFILE':
         return (
@@ -574,29 +731,208 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             onThemeModeChange={onThemeModeChange}
           />
         );
-      case 'HISTORY':
+      case 'HISTORY': {
+        // Filter pill renderer reused for the status row. Local to this case
+        // so it can close over toggleHistoryStatus / historyStatusSet without
+        // becoming yet another top-level helper.
+        const StatusChip: React.FC<{ value: string; label: string; tone: string }> = ({ value, label, tone }) => {
+          const isActive = historyStatusSet.has(value);
+          return (
+            <button
+              type="button"
+              onClick={() => toggleHistoryStatus(value)}
+              className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border transition-colors ${
+                isActive ? tone : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        };
+        const totalBets = props.activeBets.length;
+        const visibleBets = filteredHistoryBets.length;
         return (
             <div className="animate-in fade-in duration-500">
-              <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                <History className="text-blue-400" size={24} /> Betting History
-              </h2>
+              <div className="mb-6 flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <Receipt className="text-blue-400" size={24} /> Betting History
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Showing <span className="font-bold text-slate-200">{visibleBets}</span>
+                  {hasActiveHistoryFilters && totalBets > 0 ? ` of ${totalBets}` : ''} bets
+                </p>
+              </div>
+
+              {/* Filter bar. Stake sliders mean "only show bets in this stake range." */}
+              {totalBets > 0 ? (
+                <div className="glass-card rounded-2xl border-slate-800 p-3 mb-6">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    {/* Status chips */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <StatusChip value="won"       label="Won"       tone="bg-green-500/15 text-green-300 border-green-500/40" />
+                      <StatusChip value="lost"      label="Lost"      tone="bg-red-500/15 text-red-300 border-red-500/40" />
+                      <StatusChip value="push"      label="Push"      tone="bg-amber-500/15 text-amber-300 border-amber-500/40" />
+                      <StatusChip value="void"      label="Void"      tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
+                      <StatusChip value="cancelled" label="Cancelled" tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
+                      <StatusChip value="pending"   label="Pending"   tone="bg-blue-500/15 text-blue-300 border-blue-500/40" />
+                    </div>
+
+                    <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
+
+                    {/* Sort dropdown — placeholder text is the current value so we
+                        don't need a separate label above it. */}
+                    <select
+                      aria-label="Sort bets"
+                      value={historySort}
+                      onChange={(e) => setHistorySort(e.target.value as HistorySort)}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-200 outline-none focus:border-violet-500"
+                    >
+                      <option value="recent">Recent first</option>
+                      <option value="oldest">Oldest first</option>
+                      <option value="stake_desc">Largest stake</option>
+                      <option value="payout_desc">Largest payout</option>
+                    </select>
+
+                    {/* Year dropdown */}
+                    <select
+                      aria-label="Filter by year"
+                      value={historyYear === 'all' ? 'all' : String(historyYear)}
+                      onChange={(e) => setHistoryYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-200 outline-none focus:border-violet-500"
+                    >
+                      <option value="all">All years</option>
+                      {historyYears.map((y) => (
+                        <option key={y} value={String(y)}>{y}</option>
+                      ))}
+                    </select>
+
+                    <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Stake Amount
+                        </span>
+                        <span className="text-[11px] text-slate-200 font-semibold tabular-nums whitespace-nowrap">
+                          ${historyMinStake.toLocaleString()} to ${(historyMaxStake ?? historyMaxStakeBound).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Min</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={historyMaxStakeBound}
+                            step={1}
+                            value={historyMinStake}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setHistoryMinStake(v);
+                              if (historyMaxStake !== null && v > historyMaxStake) setHistoryMaxStake(v);
+                            }}
+                            className="w-28 accent-violet-500"
+                            aria-label="Minimum stake to show"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Max</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={historyMaxStakeBound}
+                            step={1}
+                            value={historyMaxStake ?? historyMaxStakeBound}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setHistoryMaxStake(v >= historyMaxStakeBound ? null : v);
+                              if (v < historyMinStake) setHistoryMinStake(v);
+                            }}
+                            className="w-28 accent-violet-500"
+                            aria-label="Maximum stake to show"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {hasActiveHistoryFilters && (
+                      <button
+                        type="button"
+                        onClick={resetHistoryFilters}
+                        className="ml-auto rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:text-white hover:border-slate-500 transition-colors"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="space-y-4">
-                {props.activeBets.length > 0 ? (
-                    props.activeBets.map(bet => (
-                        <div key={bet.id} className="glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all">
+                {totalBets > 0 && filteredHistoryBets.length === 0 ? (
+                    <div className="py-12 text-center glass-card rounded-2xl border-dashed border-slate-700">
+                      <p className="text-sm text-slate-400">No bets match your filters.</p>
+                      <button
+                        onClick={resetHistoryFilters}
+                        className="mt-3 text-blue-400 hover:text-blue-300 font-semibold text-xs"
+                      >
+                        Clear filters
+                      </button>
+                    </div>
+                ) : filteredHistoryBets.length > 0 ? (
+                    filteredHistoryBets.map(bet => {
+                      const s = (bet.status ?? 'PENDING').toLowerCase();
+                      // Compute the actual amount returned to the wallet so reduced
+                      // parlays don't overstate. Singles always pay potentialPayout
+                      // when WON; parlays may have pushed legs and pay less.
+                      const effectivePayout = (() => {
+                        if (s === 'won' && bet.betType === 'parlay' && bet.parlayLegs?.length) {
+                          const r = computeParlayRollup(bet.parlayLegs, bet.stake);
+                          if (r.state === 'WON') return r.payout;
+                        }
+                        return bet.potentialPayout;
+                      })();
+                      // Red/green/amber widget styling, applied to the entire row
+                      // (left border + tinted gradient) so settled outcomes are
+                      // scannable at a glance, not just via the small status pill.
+                      const rowAccent =
+                        s === 'won'                            ? 'border-l-4 border-l-emerald-500' :
+                        s === 'lost'                           ? 'border-l-4 border-l-red-500' :
+                        s === 'push'                           ? 'border-l-4 border-l-amber-500' :
+                        (s === 'void' || s === 'cancelled')    ? 'border-l-4 border-l-slate-500' :
+                                                                 '';
+                      const pillTone =
+                        s === 'won'                            ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                        s === 'lost'                           ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        s === 'push'                           ? 'bg-amber-500/10 text-amber-300 border-amber-500/20' :
+                        (s === 'void' || s === 'cancelled')    ? 'bg-slate-500/10 text-slate-300 border-slate-500/20' :
+                                                                 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+                      const pillLabel =
+                        s === 'won'       ? 'Won' :
+                        s === 'lost'      ? 'Lost' :
+                        s === 'push'      ? 'Push' :
+                        s === 'void'      ? 'Void' :
+                        s === 'cancelled' ? 'Cancelled' :
+                                            'Pending';
+                      // Right-side payout block changes meaning by status. Free bet
+                      // claims and stake-refund cases are surfaced here too.
+                      const payoutBlock =
+                        s === 'won'                          ? { label: 'Payout',           value: `$${effectivePayout.toLocaleString()}`,   color: 'text-emerald-400' } :
+                        s === 'lost'                         ? { label: 'Lost',             value: `-$${bet.stake.toLocaleString()}`,        color: 'text-red-400' } :
+                        s === 'push'                         ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-amber-300' } :
+                        (s === 'void' || s === 'cancelled')  ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-slate-300' } :
+                                                               { label: 'Potential Payout', value: `$${bet.potentialPayout.toLocaleString()}`, color: 'text-blue-400' };
+                      return (
+                        <div key={bet.id} className={`glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all ${rowAccent}`}>
                           <div className="flex justify-between items-start mb-4">
                             <div>
                               <p className="text-xs font-bold text-slate-500 uppercase mb-1">{bet.marketTitle}</p>
                               <h4 className="text-lg font-bold">Selected: {bet.optionLabel}</h4>
                               <p className="text-xs text-slate-500 mt-1">{bet.placedAt.toLocaleString()}</p>
                             </div>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${
-                                bet.status?.toLowerCase() === 'won'  ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                                    bet.status?.toLowerCase() === 'lost' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                        'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                            }`}>
-                        {bet.status?.toLowerCase() === 'won' ? 'Won' : bet.status?.toLowerCase() === 'lost' ? 'Lost' : 'Pending'}
-                      </span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${pillTone}`}>
+                              {pillLabel}
+                            </span>
                           </div>
                           <div className="flex justify-between items-end border-t border-slate-800 pt-4">
                             <div className="grid grid-cols-2 gap-8">
@@ -610,12 +946,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className="text-[10px] font-bold text-slate-500 uppercase">Potential Payout</p>
-                              <p className="text-xl font-black text-blue-400">${bet.potentialPayout.toLocaleString()}</p>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase">{payoutBlock.label}</p>
+                              <p className={`text-xl font-black ${payoutBlock.color}`}>{payoutBlock.value}</p>
                             </div>
                           </div>
                         </div>
-                    ))
+                      );
+                    })
                 ) : (
                     <div className="py-20 text-center glass-card rounded-2xl border-dashed">
                       <Gamepad2 className="mx-auto text-slate-700 mb-4" size={48} />
@@ -628,6 +965,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
             </div>
         );
+      }
       case 'MARKETS':
       default:
         const showMockNflBoard = sportFilter === 'Football' && leagueFilter.toLowerCase() === 'nfl';
@@ -884,7 +1222,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             )}
                             <div className="space-y-2">
                               {mockNflGames.map((game) => (
-                                <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
+                                <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
                                   {(() => {
                                     const mockMarket = mockMarketForGame(game);
                                     const spreadAway = mockMarket.options[0];
@@ -1054,7 +1392,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         )}
                         {showApiMarketsTable && (
                           <>
-                        <div className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] bg-slate-900/75 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        <div className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] bg-slate-900/75 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                           <div>Game</div>
                           <div className="text-center">Spread</div>
                           <div className="text-center">Total</div>
@@ -1080,7 +1418,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               return (
                                   <div
                                       key={market.id}
-                                      className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(140px,0.7fr))] items-stretch px-4 py-2.5 border-t border-slate-800/90 bg-slate-900/25 hover:bg-slate-800/35 transition-colors"
+                                      className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] items-stretch px-4 py-2.5 border-t border-slate-800/90 bg-slate-900/25 hover:bg-slate-800/35 transition-colors"
                                   >
                                     <div className="pr-3">
                                       <p className="text-[10px] font-semibold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
@@ -1190,7 +1528,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <Users size={24} />
             </NavLink>
             <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <History size={24} />
+              <Receipt size={24} />
             </NavLink>
             <NavLink to="/head-to-head" title="Head-to-Head" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-red-500/10 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <Swords size={24} />
@@ -1261,18 +1599,38 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           </div>
         </main>
 
-        {view === 'MARKETS' && (
+        {view === 'MARKETS' && !isBetSlipCollapsed && (
             <BetSlip
                 selection={betSelection}
                 parlaySelections={parlaySelections}
                 activeBets={props.activeBets}
                 onClear={onClearBet}
                 onPlaceBet={handlePlaceBetWithBoost}
+                onClose={() => setIsBetSlipCollapsed(true)}
                 onSelectBet={onSelectBet}
                 balance={balance}
                 activeBoost={activeBoost}
+                limitError={null}
+                parlayRuleError={parlayRuleError}
+                onViewAllHistory={() => navigate('/history')}
             />
         )}
+        {view === 'MARKETS' && isBetSlipCollapsed && (
+          <button
+            type="button"
+            onClick={() => setIsBetSlipCollapsed(false)}
+            className="fixed top-4 right-4 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-violet-400/50 bg-[#171427] text-violet-200 shadow-lg transition-colors hover:bg-[#221b3d]"
+            title="Open bet slip"
+            aria-label="Open bet slip"
+          >
+            <Ticket size={18} />
+          </button>
+        )}
+        <WinCelebrationModal
+          bet={activeWinBet}
+          open={Boolean(activeWinBet)}
+          onClose={() => setActiveWinBet(null)}
+        />
       </div>
   );
 };

@@ -8,10 +8,15 @@ import {
   resetRatio,
   setNewDaily,
   setUserMoney,
-  setUserName, setUserPrivacy
+  setUserName,
+  setUserPrivacy,
+  setUserDefaultProfileAvatar,
+  setUserProfileBackground
 } from "@/services/dbOps.ts";
 import {APP} from "@/models/constants.ts";
 import {Bet, Friend} from "@/models";
+import { randomProfileBackground } from "@/models/profileBackgrounds";
+import { randomDefaultProfileAvatar } from "@/models/defaultProfileAvatars";
 
 
 const SESSION_KEY = 'bethub_session';
@@ -48,6 +53,8 @@ export async function signUp(email: string, password: string, username : string)
     await setUserMoney(user.uid, 10000.00)
     await setNewDaily(user.uid)
     await setUserPrivacy(user.uid, false)
+    await setUserDefaultProfileAvatar(user.uid, randomDefaultProfileAvatar())
+    await setUserProfileBackground(user.uid, randomProfileBackground())
     await resetRatio(user.uid)
     userEmail = userCredential.user.email
     userMoney = (await getUserMoney(userCredential.user.uid))
