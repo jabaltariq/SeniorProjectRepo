@@ -35,6 +35,10 @@ function resolveProfileAvatarUrl(uid: string, name: string, data: DocumentData):
 }
 
 function resolveProfileBackgroundUrl(uid: string, name: string, data: DocumentData): string {
+    const normalizedName = name.toLowerCase();
+    if (normalizedName === "zoomerchud" || normalizedName === "fatcat97") {
+        return profileBackgroundForUid(uid, name);
+    }
     return typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
         ? data.profileBackgroundUrl
         : profileBackgroundForUid(uid, name);
@@ -1571,7 +1575,9 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
             : isDefaultProfileAvatarPath(data.defaultAvatarPath)
                 ? data.defaultAvatarPath
                 : undefined,
-        profileBackgroundUrl: typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
+        profileBackgroundUrl: name.toLowerCase() === "zoomerchud" || name.toLowerCase() === "fatcat97"
+            ? profileBackgroundForUid(uid, name)
+            : typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
             ? data.profileBackgroundUrl
             : undefined,
         netWorth: Math.round(Number(data.money) || 0),

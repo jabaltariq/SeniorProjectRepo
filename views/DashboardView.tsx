@@ -763,13 +763,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 </p>
               </div>
 
-              {/* ── Filter bar — single horizontal row that wraps gracefully
-                  on narrow viewports. Drops the per-control labels and lets
-                  each control's value/placeholder carry meaning so we can
-                  fit chips + sort + year + dual slider + reset on one line.
-                  Step on both range inputs is 1 so every dollar between $0
-                  and historyMaxStakeBound (default $1000, auto-bumps for
-                  high-roller accounts) is selectable. ── */}
+              {/* Filter bar. Stake sliders mean "only show bets in this stake range." */}
               {totalBets > 0 ? (
                 <div className="glass-card rounded-2xl border-slate-800 p-3 mb-6">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -814,42 +808,51 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
 
                     <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
 
-                    {/* Stake range — two compact sliders side-by-side. Each
-                        slider clamps the other so the range stays valid
-                        without ping-pong updates. */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stake</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={historyMaxStakeBound}
-                        step={1}
-                        value={historyMinStake}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          setHistoryMinStake(v);
-                          if (historyMaxStake !== null && v > historyMaxStake) setHistoryMaxStake(v);
-                        }}
-                        className="w-24 accent-violet-500"
-                        aria-label="Minimum stake"
-                      />
-                      <span className="text-[11px] text-slate-200 font-semibold tabular-nums whitespace-nowrap min-w-[6.5rem] text-center">
-                        ${historyMinStake.toLocaleString()}–${(historyMaxStake ?? historyMaxStakeBound).toLocaleString()}
-                      </span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={historyMaxStakeBound}
-                        step={1}
-                        value={historyMaxStake ?? historyMaxStakeBound}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          setHistoryMaxStake(v >= historyMaxStakeBound ? null : v);
-                          if (v < historyMinStake) setHistoryMinStake(v);
-                        }}
-                        className="w-24 accent-violet-500"
-                        aria-label="Maximum stake"
-                      />
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Stake Amount
+                        </span>
+                        <span className="text-[11px] text-slate-200 font-semibold tabular-nums whitespace-nowrap">
+                          ${historyMinStake.toLocaleString()} to ${(historyMaxStake ?? historyMaxStakeBound).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Min</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={historyMaxStakeBound}
+                            step={1}
+                            value={historyMinStake}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setHistoryMinStake(v);
+                              if (historyMaxStake !== null && v > historyMaxStake) setHistoryMaxStake(v);
+                            }}
+                            className="w-28 accent-violet-500"
+                            aria-label="Minimum stake to show"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Max</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={historyMaxStakeBound}
+                            step={1}
+                            value={historyMaxStake ?? historyMaxStakeBound}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setHistoryMaxStake(v >= historyMaxStakeBound ? null : v);
+                              if (v < historyMinStake) setHistoryMinStake(v);
+                            }}
+                            className="w-28 accent-violet-500"
+                            aria-label="Maximum stake to show"
+                          />
+                        </label>
+                      </div>
                     </div>
 
                     {hasActiveHistoryFilters && (

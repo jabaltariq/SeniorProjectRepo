@@ -45,6 +45,7 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
   const [searchLoading, setSearchLoading] = useState(false);
   const [requestedUserIds, setRequestedUserIds] = useState<Set<string>>(() => new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showAllActivity, setShowAllActivity] = useState(false);
   const [privacy, togglePrivacy] = useState(userPrivacy);
 
   const location = useLocation();
@@ -314,6 +315,10 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
   const isMessageOpen = Boolean(activeFriend && threadId && currentUid);
   const messagesColClass = !isMessageOpen ? 'xl:col-span-1' : 'xl:col-span-4';
   const activityColClass = !isMessageOpen ? 'xl:col-span-8' : 'xl:col-span-5';
+  const isProfilePublic = !privacy;
+  const activityPreviewCount = 4;
+  const visibleActivities = showAllActivity ? activities : activities.slice(0, activityPreviewCount);
+  const canToggleActivity = activities.length > activityPreviewCount;
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 animate-in fade-in slide-in-from-right duration-500">
@@ -324,8 +329,9 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
             <h2 className="text-2xl font-black text-white">Friends</h2>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-2.5 py-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Profile Visibility
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <Eye size={12} aria-hidden />
+              Profile
             </span>
             <button
               type="button"
@@ -335,16 +341,16 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                 void setUserPrivacy(uid, !privacy).then(() => togglePrivacy(!privacy));
               }}
               className={`relative h-5 w-10 rounded-full border transition-colors ${
-                privacy
+                isProfilePublic
                   ? 'border-blue-400/60 bg-blue-500/30'
                   : 'border-slate-700 bg-slate-800'
               }`}
-              aria-label="Toggle profile visibility"
-              title={privacy ? 'Friends only' : 'Public'}
+              aria-label="Toggle public profile"
+              title={isProfilePublic ? 'Public' : 'Friends only'}
             >
               <span
                 className={`absolute top-[2px] h-3.5 w-3.5 rounded-full bg-white transition-all ${
-                  privacy ? 'left-[20px]' : 'left-[2px]'
+                  isProfilePublic ? 'left-[20px]' : 'left-[2px]'
                 }`}
               />
             </button>
@@ -529,12 +535,21 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
 
       {/* Activity Feed (always right) */}
       <div className={`${activityColClass} space-y-6`}>
-        <div>
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-2xl font-black text-white">Activity Feed</h2>
+          {canToggleActivity && (
+            <button
+              type="button"
+              onClick={() => setShowAllActivity((prev) => !prev)}
+              className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300 hover:border-slate-500 hover:text-white transition-colors"
+            >
+              {showAllActivity ? 'View Less' : `View All (${activities.length})`}
+            </button>
+          )}
         </div>
 
         <div className="space-y-4 max-h-[72vh] overflow-y-auto custom-scrollbar pr-1">
-          {activities?.map((activity) => {
+          {visibleActivities?.map((activity) => {
                 const expandedBet = expandedBetForActivity(activity);
                 const placedAt =
                   expandedBet?.placedAt instanceof Date

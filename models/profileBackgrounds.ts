@@ -9,7 +9,9 @@ export const PROFILE_BACKGROUND_URLS = [
 ] as const;
 
 export function profileBackgroundForUid(uid: string | null, displayName?: string): string {
-  if (displayName?.toLowerCase() === 'zoomerchud') return PROFILE_BACKGROUND_URLS[1];
+  const name = displayName?.toLowerCase();
+  if (name === 'zoomerchud') return PROFILE_BACKGROUND_URLS[1];
+  if (name === 'fatcat97') return PROFILE_BACKGROUND_URLS[2];
   if (!uid) return PROFILE_BACKGROUND_URLS[0];
 
   let hash = 0;
