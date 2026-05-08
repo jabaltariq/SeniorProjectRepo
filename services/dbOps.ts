@@ -2267,6 +2267,52 @@ export async function getFriends(uid : string) : Promise<Friend[]> {
     return friendsList;
 }
 
+export interface UserSearchResult {
+    uid: string;
+    name: string;
+    privacyEnabled: boolean;
+}
+
+/**
+ * Lightweight username search for friend discovery.
+ * Frontend-first implementation: scans userInfo docs and filters in memory.
+ * Safe for small/medium datasets; can be replaced with indexed query later.
+ */
+export async function searchUsersByNamePrefix(
+    queryText: string,
+    currentUid: string | null | undefined,
+    limitCount: number = 8,
+): Promise<UserSearchResult[]> {
+    const q = (queryText ?? "").trim().toLowerCase();
+    if (!q) return [];
+
+    const snapshot = await getDocs(collection(db, "userInfo"));
+    const rows: UserSearchResult[] = [];
+
+    for (const docSnap of snapshot.docs) {
+        if (rows.length >= limitCount) break;
+        const uid = docSnap.id;
+        if (currentUid && uid === currentUid) continue;
+        const data = docSnap.data();
+        const name = typeof data["name"] === "string" ? data["name"].trim() : "";
+        if (!name) continue;
+        if (!name.toLowerCase().includes(q)) continue;
+        rows.push({
+            uid,
+            name,
+            privacyEnabled: data["privacy"] === true,
+        });
+    }
+
+    // Stable-ish relevance: startsWith first, then alphabetical.
+    return rows.sort((a, b) => {
+        const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+        const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return a.name.localeCompare(b.name);
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────
 //  HEAD-TO-HEAD (peer-to-peer side wagers, odds-matched)
 //

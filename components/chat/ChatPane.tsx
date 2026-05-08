@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import type { Friend } from '../../models';
-import { Send, Trash2 } from 'lucide-react';
+import { Send, Trash2, X } from 'lucide-react';
 
 export type ChatMessage = {
   id: string;
@@ -20,6 +20,7 @@ interface ChatPaneProps {
   onComposerValueChange: (next: string) => void;
   onSend: () => void;
   onDeleteMessage?: (messageId: string) => void;
+  onOpenProfile?: (userId: string) => void;
   onClose?: () => void;
 }
 
@@ -37,6 +38,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   onComposerValueChange,
   onSend,
   onDeleteMessage,
+  onOpenProfile,
   onClose,
 }) => {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -69,8 +71,14 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           </div>
           <div className="min-w-0">
             <div className="flex items-baseline gap-2">
-              <p className="font-black text-slate-100 truncate">{otherUser.name}</p>
-              <span className="text-[10px] text-slate-500 uppercase font-bold">Direct Message</span>
+              <button
+                type="button"
+                onClick={() => onOpenProfile?.(otherUser.id)}
+                className="font-black text-slate-100 truncate hover:text-blue-300 transition-colors text-left"
+                title={`Open ${otherUser.name}'s profile`}
+              >
+                {otherUser.name}
+              </button>
             </div>
             <p className="text-[11px] text-slate-500 truncate">{otherUser.lastActive}</p>
           </div>
@@ -81,9 +89,10 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-950/50 hover:text-white transition-colors"
+              className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-2 text-slate-300 hover:bg-slate-950/50 hover:text-white transition-colors"
+              aria-label="Close messages"
             >
-              Close
+              <X size={16} />
             </button>
           )}
         </div>
