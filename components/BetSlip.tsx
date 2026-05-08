@@ -23,6 +23,10 @@ interface BetSlipProps {
    *  `limitError` so it does NOT disable the place-bet button — the user
    *  may still have a valid parlay queued up. */
   parlayRuleError?: string | null;
+  /** Click handler for the "View all" link in the Recent Bets card header.
+   *  Wired by the parent to react-router navigate('/history'). Optional so
+   *  the BetSlip stays usable in screens where /history isn't reachable. */
+  onViewAllHistory?: () => void;
 }
 
 export const BetSlip: React.FC<BetSlipProps> = ({
@@ -37,6 +41,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                                                   activeBoost,
                                                   limitError,
                                                   parlayRuleError,
+                                                  onViewAllHistory,
                                                 }) => {
   const [stakeInput, setStakeInput] = useState<string>('20');
   const [tab, setTab] = useState<SlipTab>('SINGLES');
@@ -238,9 +243,20 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   const RecentBetsCard: React.FC<{ title: string; bets: Bet[]; emptyText: string; kind: 'single' | 'parlay' }> =
       ({ title, bets, emptyText, kind }) => (
       <div className={`${cardClass} p-3.5`}>
-        <div className="mb-2.5 flex items-center justify-between">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">{title}</p>
-          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{bets.length}</span>
+          <div className="flex items-center gap-2">
+            {onViewAllHistory ? (
+                <button
+                    type="button"
+                    onClick={onViewAllHistory}
+                    className="text-[10px] font-bold uppercase tracking-wider text-violet-300 hover:text-violet-200 transition-colors"
+                >
+                  View all
+                </button>
+            ) : null}
+            <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{bets.length}</span>
+          </div>
         </div>
         {bets.length === 0 ? (
             <p className="text-xs text-slate-500">{emptyText}</p>

@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
   Wallet as WalletIcon,
   Home,
   BarChart3,
-  History,
+  Receipt,
   Gamepad2,
   Search,
   Users,
@@ -325,6 +325,77 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   // ── Boost state — lives here so BetSlip and BoostsCard share it ─
   const [activeBoost, setActiveBoost] = useState<BoostType | null>(null);
 
+  // ── History page filters ───────────────────────────────────────
+  // State lives at the component top (not inside the HISTORY case) because
+  // hooks can't be called conditionally. Keeps filter selections sticky as
+  // the user toggles between views, which matches typical sportsbook UX.
+  type HistorySort = 'recent' | 'oldest' | 'stake_desc' | 'payout_desc';
+  const [historySort, setHistorySort] = useState<HistorySort>('recent');
+  const [historyStatusSet, setHistoryStatusSet] = useState<Set<string>>(() => new Set());
+  const [historyYear, setHistoryYear] = useState<number | 'all'>('all');
+  const [historyMinStake, setHistoryMinStake] = useState<number>(0);
+  const [historyMaxStake, setHistoryMaxStake] = useState<number | null>(null);
+
+  // Distinct years the user has bet in. Always derived from the realtime
+  // activeBets list so newly-placed bets in fresh years show up automatically.
+  const historyYears = useMemo(() => {
+    const years = new Set<number>();
+    props.activeBets.forEach((b) => years.add(b.placedAt.getFullYear()));
+    return Array.from(years).sort((a, b) => b - a);
+  }, [props.activeBets]);
+
+  // Slider upper bound — defaults to $1000, but if a user has bets larger
+  // than that we bump the bound up to the nearest $100 so they can still
+  // filter their high rollers. Step on the slider itself is 1 so every
+  // dollar between 0 and the bound is selectable.
+  const historyMaxStakeBound = useMemo(() => {
+    const observed = props.activeBets.reduce((acc, b) => Math.max(acc, b.stake), 0);
+    return Math.max(1000, Math.ceil(observed / 100) * 100);
+  }, [props.activeBets]);
+
+  const filteredHistoryBets = useMemo(() => {
+    const list = props.activeBets.filter((b) => {
+      if (historyStatusSet.size > 0) {
+        const s = (b.status ?? 'PENDING').toLowerCase();
+        if (!historyStatusSet.has(s)) return false;
+      }
+      if (historyYear !== 'all' && b.placedAt.getFullYear() !== historyYear) return false;
+      if (b.stake < historyMinStake) return false;
+      if (historyMaxStake !== null && b.stake > historyMaxStake) return false;
+      return true;
+    });
+    switch (historySort) {
+      case 'oldest':      return list.sort((a, b) => a.placedAt.getTime() - b.placedAt.getTime());
+      case 'stake_desc':  return list.sort((a, b) => b.stake - a.stake);
+      case 'payout_desc': return list.sort((a, b) => b.potentialPayout - a.potentialPayout);
+      case 'recent':
+      default:            return list.sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime());
+    }
+  }, [props.activeBets, historyStatusSet, historyYear, historyMinStake, historyMaxStake, historySort]);
+
+  const toggleHistoryStatus = (status: string) =>
+    setHistoryStatusSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+
+  const resetHistoryFilters = () => {
+    setHistorySort('recent');
+    setHistoryStatusSet(new Set());
+    setHistoryYear('all');
+    setHistoryMinStake(0);
+    setHistoryMaxStake(null);
+  };
+
+  const hasActiveHistoryFilters =
+    historyStatusSet.size > 0 ||
+    historyYear !== 'all' ||
+    historyMinStake > 0 ||
+    historyMaxStake !== null ||
+    historySort !== 'recent';
+
   const handlePlaceBetWithBoost = (stake: number, betType?: 'single' | 'parlay') => {
     console.log('handlePlaceBetWithBoost called, activeBoost:', activeBoost);
     onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null));
@@ -584,15 +655,153 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             onThemeModeChange={onThemeModeChange}
           />
         );
-      case 'HISTORY':
+      case 'HISTORY': {
+        // Filter pill renderer reused for the status row. Local to this case
+        // so it can close over toggleHistoryStatus / historyStatusSet without
+        // becoming yet another top-level helper.
+        const StatusChip: React.FC<{ value: string; label: string; tone: string }> = ({ value, label, tone }) => {
+          const isActive = historyStatusSet.has(value);
+          return (
+            <button
+              type="button"
+              onClick={() => toggleHistoryStatus(value)}
+              className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border transition-colors ${
+                isActive ? tone : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        };
+        const totalBets = props.activeBets.length;
+        const visibleBets = filteredHistoryBets.length;
         return (
             <div className="animate-in fade-in duration-500">
-              <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                <History className="text-blue-400" size={24} /> Betting History
-              </h2>
+              <div className="mb-6 flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <Receipt className="text-blue-400" size={24} /> Betting History
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Showing <span className="font-bold text-slate-200">{visibleBets}</span>
+                  {hasActiveHistoryFilters && totalBets > 0 ? ` of ${totalBets}` : ''} bets
+                </p>
+              </div>
+
+              {/* ── Filter bar — single horizontal row that wraps gracefully
+                  on narrow viewports. Drops the per-control labels and lets
+                  each control's value/placeholder carry meaning so we can
+                  fit chips + sort + year + dual slider + reset on one line.
+                  Step on both range inputs is 1 so every dollar between $0
+                  and historyMaxStakeBound (default $1000, auto-bumps for
+                  high-roller accounts) is selectable. ── */}
+              {totalBets > 0 ? (
+                <div className="glass-card rounded-2xl border-slate-800 p-3 mb-6">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    {/* Status chips */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <StatusChip value="won"       label="Won"       tone="bg-green-500/15 text-green-300 border-green-500/40" />
+                      <StatusChip value="lost"      label="Lost"      tone="bg-red-500/15 text-red-300 border-red-500/40" />
+                      <StatusChip value="push"      label="Push"      tone="bg-amber-500/15 text-amber-300 border-amber-500/40" />
+                      <StatusChip value="void"      label="Void"      tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
+                      <StatusChip value="cancelled" label="Cancelled" tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
+                      <StatusChip value="pending"   label="Pending"   tone="bg-blue-500/15 text-blue-300 border-blue-500/40" />
+                    </div>
+
+                    <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
+
+                    {/* Sort dropdown — placeholder text is the current value so we
+                        don't need a separate label above it. */}
+                    <select
+                      aria-label="Sort bets"
+                      value={historySort}
+                      onChange={(e) => setHistorySort(e.target.value as HistorySort)}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-200 outline-none focus:border-violet-500"
+                    >
+                      <option value="recent">Recent first</option>
+                      <option value="oldest">Oldest first</option>
+                      <option value="stake_desc">Largest stake</option>
+                      <option value="payout_desc">Largest payout</option>
+                    </select>
+
+                    {/* Year dropdown */}
+                    <select
+                      aria-label="Filter by year"
+                      value={historyYear === 'all' ? 'all' : String(historyYear)}
+                      onChange={(e) => setHistoryYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-200 outline-none focus:border-violet-500"
+                    >
+                      <option value="all">All years</option>
+                      {historyYears.map((y) => (
+                        <option key={y} value={String(y)}>{y}</option>
+                      ))}
+                    </select>
+
+                    <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
+
+                    {/* Stake range — two compact sliders side-by-side. Each
+                        slider clamps the other so the range stays valid
+                        without ping-pong updates. */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stake</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={historyMaxStakeBound}
+                        step={1}
+                        value={historyMinStake}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setHistoryMinStake(v);
+                          if (historyMaxStake !== null && v > historyMaxStake) setHistoryMaxStake(v);
+                        }}
+                        className="w-24 accent-violet-500"
+                        aria-label="Minimum stake"
+                      />
+                      <span className="text-[11px] text-slate-200 font-semibold tabular-nums whitespace-nowrap min-w-[6.5rem] text-center">
+                        ${historyMinStake.toLocaleString()}–${(historyMaxStake ?? historyMaxStakeBound).toLocaleString()}
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={historyMaxStakeBound}
+                        step={1}
+                        value={historyMaxStake ?? historyMaxStakeBound}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setHistoryMaxStake(v >= historyMaxStakeBound ? null : v);
+                          if (v < historyMinStake) setHistoryMinStake(v);
+                        }}
+                        className="w-24 accent-violet-500"
+                        aria-label="Maximum stake"
+                      />
+                    </div>
+
+                    {hasActiveHistoryFilters && (
+                      <button
+                        type="button"
+                        onClick={resetHistoryFilters}
+                        className="ml-auto rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:text-white hover:border-slate-500 transition-colors"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="space-y-4">
-                {props.activeBets.length > 0 ? (
-                    props.activeBets.map(bet => {
+                {totalBets > 0 && filteredHistoryBets.length === 0 ? (
+                    <div className="py-12 text-center glass-card rounded-2xl border-dashed border-slate-700">
+                      <p className="text-sm text-slate-400">No bets match your filters.</p>
+                      <button
+                        onClick={resetHistoryFilters}
+                        className="mt-3 text-blue-400 hover:text-blue-300 font-semibold text-xs"
+                      >
+                        Clear filters
+                      </button>
+                    </div>
+                ) : filteredHistoryBets.length > 0 ? (
+                    filteredHistoryBets.map(bet => {
                       const s = (bet.status ?? 'PENDING').toLowerCase();
                       // Compute the actual amount returned to the wallet so reduced
                       // parlays don't overstate. Singles always pay potentialPayout
@@ -677,6 +886,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               </div>
             </div>
         );
+      }
       case 'MARKETS':
       default:
         const showMockNflBoard = sportFilter === 'Football' && leagueFilter.toLowerCase() === 'nfl';
@@ -1239,7 +1449,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
               <Users size={24} />
             </NavLink>
             <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <History size={24} />
+              <Receipt size={24} />
             </NavLink>
             <NavLink to="/head-to-head" title="Head-to-Head" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-red-500/10 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <Swords size={24} />
@@ -1323,6 +1533,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 activeBoost={activeBoost}
                 limitError={null}
                 parlayRuleError={parlayRuleError}
+                onViewAllHistory={() => navigate('/history')}
             />
         )}
         {view === 'MARKETS' && isBetSlipCollapsed && (

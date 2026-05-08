@@ -2,7 +2,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import { NavLink } from 'react-router-dom';
 import {Bet, Friend, SocialActivity} from '../models';
-import {Users, Activity, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';
+import {Users, Radio, Eye, Swords, Circle, ShieldCheck, ShieldOff, Search, UserPlus, UserPlus2} from 'lucide-react';
 import {
   addFriend, FriendRequest,
   getFriends,
@@ -253,7 +253,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
       <div className="xl:col-span-2 space-y-6">
         <div>
           <h2 className="text-2xl font-black text-white flex items-center gap-2">
-            <Activity className="text-green-400" size={28} /> Activity Feed
+            <Radio className="text-green-400" size={28} strokeWidth={2.5} /> Activity Feed
           </h2>
           <p className="text-slate-400">Real-time pulses from the community.</p>
         </div>
@@ -281,7 +281,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                   <button
                       onClick={() => toggleDetails(activity.id)}
                       className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter">
-                    <Activity size={12} /> View Bet
+                    <Eye size={12} /> View Bet
                   </button>
 
                   {(() => {
