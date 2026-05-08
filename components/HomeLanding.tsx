@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Search, Trophy, Users, History, Gift, LogOut } from 'lucide-react';
+import { Search, Trophy, Users, History, LogOut } from 'lucide-react';
 
 /** Served from `public/home/` (respects Vite `base`, e.g. /bethub/) */
 const homeImg = (file: string) => `${import.meta.env.BASE_URL}home/${file}`;
@@ -25,7 +25,6 @@ const PANELS: readonly Panel[] = [
     image: homeImg('live-markets-hub.png'),
     actions: [
       { label: 'Browse markets', to: '/bet' },
-      { label: 'Search games', to: '/bet', icon: <Search size={16} strokeWidth={2.5} /> },
     ],
   },
   {
@@ -34,7 +33,6 @@ const PANELS: readonly Panel[] = [
     image: homeImg('arena-rankings.png'),
     actions: [
       { label: 'View leaderboard', to: '/leaderboard', icon: <Trophy size={16} strokeWidth={2.5} /> },
-      { label: 'Full standings', to: '/leaderboard' },
     ],
   },
   {
@@ -43,7 +41,6 @@ const PANELS: readonly Panel[] = [
     image: homeImg('squad-rivals.png'),
     actions: [
       { label: 'Open friends', to: '/friends', icon: <Users size={16} strokeWidth={2.5} /> },
-      { label: 'Social feed', to: '/friends' },
     ],
   },
   {
@@ -58,15 +55,11 @@ const ghostBtn =
   'inline-flex items-center justify-center gap-2 w-full max-w-[220px] px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white border border-white/55 bg-white/5 hover:bg-white/15 hover:border-white/80 transition-colors';
 
 interface HomeLandingProps {
-  dailyBonusAvailable: boolean;
-  onDailyBonus: () => void;
   onLogout: () => void;
   isLightMode?: boolean;
 }
 
 export const HomeLanding: React.FC<HomeLandingProps> = ({
-  dailyBonusAvailable,
-  onDailyBonus,
   onLogout,
   isLightMode = false,
 }) => {
@@ -115,7 +108,7 @@ export const HomeLanding: React.FC<HomeLandingProps> = ({
       </header>
 
       <div className="grid grid-cols-1 min-[900px]:grid-cols-2 xl:grid-cols-4 flex-1 min-h-0 auto-rows-fr xl:min-h-[min(calc(100dvh-5.75rem),980px)] xl:max-h-[min(calc(100dvh-5.75rem),980px)] xl:items-stretch">
-        {PANELS.map((panel, i) => (
+        {PANELS.map((panel) => (
           <section
             key={panel.title}
             className="home-landing-panel relative flex min-h-[280px] min-[900px]:min-h-[360px] xl:min-h-0 xl:h-full flex-col border-b border-white/10 min-[900px]:border-r min-[900px]:last:border-r-0 xl:border-b-0 xl:border-r xl:last:border-r-0 bg-slate-900"
@@ -152,19 +145,6 @@ export const HomeLanding: React.FC<HomeLandingProps> = ({
                     {a.label}
                   </button>
                 ))}
-                {i === 3 && (
-                  <button
-                    type="button"
-                    onClick={onDailyBonus}
-                    disabled={!dailyBonusAvailable}
-                    className={`home-ghost-btn ${ghostBtn} border-amber-400/60 text-amber-50 hover:bg-amber-500/10 ${
-                      !dailyBonusAvailable ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    <Gift size={16} strokeWidth={2.5} />
-                    {dailyBonusAvailable ? 'Daily bonus' : 'Bonus claimed'}
-                  </button>
-                )}
               </div>
             </div>
           </section>

@@ -170,6 +170,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const isLightMode = themeMode === 'light';
   const [promotionsOpen, setPromotionsOpen] = useState(false);
   const [mockNflGames, setMockNflGames] = useState<MockNflGameState[]>([]);
+  const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
 
@@ -323,6 +324,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     console.log('handlePlaceBetWithBoost called, activeBoost:', activeBoost);
     onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null));
   };
+
+  useEffect(() => {
+    if (betSelection || parlaySelections.length > 0) {
+      setIsBetSlipCollapsed(false);
+    }
+  }, [betSelection, parlaySelections.length]);
 
 
   // ── Grab uid once for sidebar cards ────────────────────────────
@@ -526,8 +533,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         return (
             <div className="animate-in fade-in duration-500 flex min-h-0 w-full flex-1 flex-col">
               <HomeLanding
-                dailyBonusAvailable={dailyBonusAvailable}
-                onDailyBonus={onDailyBonus}
                 onLogout={onLogout}
                 isLightMode={isLightMode}
               />
@@ -590,13 +595,31 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               <h4 className="text-lg font-bold">Selected: {bet.optionLabel}</h4>
                               <p className="text-xs text-slate-500 mt-1">{bet.placedAt.toLocaleString()}</p>
                             </div>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${
-                                bet.status?.toLowerCase() === 'won'  ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                                    bet.status?.toLowerCase() === 'lost' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                        'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                            }`}>
-                        {bet.status?.toLowerCase() === 'won' ? 'Won' : bet.status?.toLowerCase() === 'lost' ? 'Lost' : 'Pending'}
-                      </span>
+                            {(() => {
+                              const s = (bet.status ?? 'PENDING').toLowerCase();
+                              const tone =
+                                s === 'won'
+                                  ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                                  : s === 'lost'
+                                    ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                    : s === 'push'
+                                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                                      : s === 'void' || s === 'cancelled'
+                                        ? 'bg-slate-500/10 text-slate-300 border-slate-500/20'
+                                        : 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+                              const label =
+                                s === 'won'       ? 'Won' :
+                                s === 'lost'      ? 'Lost' :
+                                s === 'push'      ? 'Push' :
+                                s === 'void'      ? 'Void' :
+                                s === 'cancelled' ? 'Cancelled' :
+                                                    'Pending';
+                              return (
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${tone}`}>
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </div>
                           <div className="flex justify-between items-end border-t border-slate-800 pt-4">
                             <div className="grid grid-cols-2 gap-8">
@@ -1261,17 +1284,30 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           </div>
         </main>
 
-        {view === 'MARKETS' && (
+        {view === 'MARKETS' && !isBetSlipCollapsed && (
             <BetSlip
                 selection={betSelection}
                 parlaySelections={parlaySelections}
                 activeBets={props.activeBets}
                 onClear={onClearBet}
                 onPlaceBet={handlePlaceBetWithBoost}
+                onClose={() => setIsBetSlipCollapsed(true)}
                 onSelectBet={onSelectBet}
                 balance={balance}
                 activeBoost={activeBoost}
+                limitError={null}
             />
+        )}
+        {view === 'MARKETS' && isBetSlipCollapsed && (
+          <button
+            type="button"
+            onClick={() => setIsBetSlipCollapsed(false)}
+            className="fixed top-4 right-4 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-violet-400/50 bg-[#171427] text-violet-200 shadow-lg transition-colors hover:bg-[#221b3d]"
+            title="Open bet slip"
+            aria-label="Open bet slip"
+          >
+            <Ticket size={18} />
+          </button>
         )}
       </div>
   );

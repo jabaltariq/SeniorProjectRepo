@@ -32,7 +32,7 @@ export interface ParlayLeg {
   optionLabel: string;
   odds: number;
   marketKey: string;
-  result?: 'WON' | 'LOST' | 'PUSH' | 'PENDING';
+  result?: 'WON' | 'LOST' | 'PUSH' | 'VOID' | 'PENDING';
 }
 
 // ── NEW: possible settlement states for a bet ────────────────────
@@ -57,6 +57,11 @@ export interface Bet {
   sportKey?: string;            // ← ADDED: e.g. "basketball_nba" (singles only)
   eventStartsAt?: Date;         // ← ADDED: kickoff time (singles only) — used by H2H lock
   settledAt?: Date;             // ← ADDED
+  // Optional metadata persisted alongside bets in Firestore. Declared here so
+  // call sites that read/write these fields don't need `as any` casts and so
+  // tsc catches typos.
+  isFree?: boolean;             // ← ADDED: bet of the day claims (no stake debit)
+  boostApplied?: 'double_payout' | 'money_back' | null; // ← ADDED: weekly boost
 }
 
 export interface LeaderboardEntry {

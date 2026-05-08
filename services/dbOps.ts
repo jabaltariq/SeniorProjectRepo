@@ -548,8 +548,21 @@ export async function saveUserMockNflGames(uid: string, games: MockNflGameState[
 }
 
 /**
- * Settles all pending bets for a finalized mock NFL game for one user.
- * This reuses the existing settleBet() path so wallet + win/loss + history
+ * Settles all pending bets affected by a finalized mock NFL game for one user.
+ *
+ * Two paths:
+ *   1. SINGLE bets whose `marketId === "mock-${game.id}"` settle immediately.
+ *      A pure tie on a moneyline / exact-line spread / exact total is treated
+ *      as a PUSH so the user's stake is refunded (the previous code voided
+ *      these silently with no money change, which deleted the stake).
+ *   2. PARLAY bets whose `parlayLegs[]` contain a leg pointing at this mock
+ *      game's market settle that leg via `recordParlayLegResult`. The roll-up
+ *      runs inside the transaction and only flips the bet to WON / LOST /
+ *      PUSH once every leg is decided. Until then it stays PENDING — which
+ *      is correct because non-mock legs (real API events) haven't been
+ *      graded yet.
+ *
+ * Reuses `settleBet` / `recordParlayLegResult` so wallet + win/loss + history
  * stay consistent with normal markets.
  */
 export async function settleUserMockNflGameBets(
@@ -561,10 +574,6 @@ export async function settleUserMockNflGameBets(
     if (game.awayScore == null || game.homeScore == null) return;
 
     const marketId = `mock-${game.id}`;
-    const pending = (await getBets(uid)).filter(
-        (b) => b.marketId === marketId && (b.status ?? "PENDING") === "PENDING",
-    );
-    if (pending.length === 0) return;
 
     const awayTeam = game.awayTeam;
     const homeTeam = game.homeTeam;
@@ -576,48 +585,77 @@ export async function settleUserMockNflGameBets(
     const margin = game.awayScore - game.homeScore;
     const totalScore = game.awayScore + game.homeScore;
 
-    const outcomeFor = (optionLabel: string): "WON" | "LOST" | "VOID" => {
+    /**
+     * Returns the raw outcome for a given option label.
+     * "VOID" means the label was unrecognized for this market.
+     * "PUSH" means it was recognized but landed exactly on the line / tied.
+     */
+    const outcomeFor = (optionLabel: string): "WON" | "LOST" | "PUSH" | "VOID" => {
         const selected = optionLabel.trim();
 
         // Moneyline
         if (selected === awayTeam) {
-            if (game.awayScore === game.homeScore) return "VOID";
+            if (game.awayScore === game.homeScore) return "PUSH";
             return game.awayScore > game.homeScore ? "WON" : "LOST";
         }
         if (selected === homeTeam) {
-            if (game.awayScore === game.homeScore) return "VOID";
+            if (game.awayScore === game.homeScore) return "PUSH";
             return game.homeScore > game.awayScore ? "WON" : "LOST";
         }
 
         // Spread
         if (selected === awaySpreadLabel) {
             const result = margin + game.spreadLine;
-            if (result === 0) return "VOID";
+            if (result === 0) return "PUSH";
             return result > 0 ? "WON" : "LOST";
         }
         if (selected === homeSpreadLabel) {
             const result = -margin - game.spreadLine;
-            if (result === 0) return "VOID";
+            if (result === 0) return "PUSH";
             return result > 0 ? "WON" : "LOST";
         }
 
         // Totals
         if (selected === overLabel) {
-            if (totalScore === game.totalLine) return "VOID";
+            if (totalScore === game.totalLine) return "PUSH";
             return totalScore > game.totalLine ? "WON" : "LOST";
         }
         if (selected === underLabel) {
-            if (totalScore === game.totalLine) return "VOID";
+            if (totalScore === game.totalLine) return "PUSH";
             return totalScore < game.totalLine ? "WON" : "LOST";
         }
 
-        // Unknown/legacy label for this mock market: void it safely.
+        // Unknown/legacy label for this mock market: void it safely so the
+        // user gets their stake back rather than losing it.
         return "VOID";
     };
 
+    const pending = (await getBets(uid)).filter(
+        (b) => (b.status ?? "PENDING") === "PENDING",
+    );
+    if (pending.length === 0) return;
+
     await Promise.all(
         pending.map(async (bet) => {
-            await settleBet(bet, outcomeFor(bet.optionLabel));
+            if (bet.betType === "parlay") {
+                const legs = bet.parlayLegs ?? [];
+                for (let idx = 0; idx < legs.length; idx++) {
+                    const leg = legs[idx];
+                    if (leg.marketId !== marketId) continue;
+                    if (leg.result && leg.result !== "PENDING") continue; // already decided
+                    const result = outcomeFor(leg.optionLabel);
+                    // A parlay leg that we can't recognize for this market is
+                    // recorded as VOID — `computeParlayRollup` treats that the
+                    // same as PUSH (drops the leg from the payout).
+                    await recordParlayLegResult(bet.id, idx, result);
+                }
+                return;
+            }
+
+            // Single bet on this exact mock market.
+            if (bet.marketId === marketId) {
+                await settleBet(bet, outcomeFor(bet.optionLabel));
+            }
         }),
     );
 }
@@ -941,16 +979,36 @@ export async function getPendingBets(): Promise<Bet[]> {
 }
 
 /**
- * Marks a bet as WON, LOST, or VOID and updates the user's wallet and record atomically.
- * Called by the settlement service after a game is confirmed completed.
+ * Marks a bet as WON / LOST / PUSH / VOID / CANCELLED and updates the user's
+ * wallet and record atomically. Called by the settlement service after a game
+ * is confirmed completed, and by the parlay roll-up below.
+ *
+ * Status semantics:
+ *   WON       — pays `payoutOverride ?? bet.potentialPayout`, wins++.
+ *   LOST      — losses++ (money_back boost refunds stake).
+ *   PUSH      — refund stake (no wins/losses change).
+ *   VOID      — refund stake (no wins/losses change). Used for malformed/
+ *               unsettleable bets where we want money back but no record hit.
+ *   CANCELLED — same money behavior as VOID (refund stake), but a different
+ *               label for cases where a bet was administratively pulled.
  *
  * Boost effects:
  *   double_payout — on a WIN, pays (potentialPayout - stake) extra (doubles the profit)
  *   money_back    — on a LOSS, refunds the stake in full
  * Free bets (isFree: true) pay out stake + profit on a win since nothing was deducted on placement.
- * Free bets that are LOST or VOID require no money change since nothing was deducted.
+ * Free bets that are LOST / PUSH / VOID / CANCELLED require no money change since
+ * nothing was deducted on placement.
+ *
+ * @param payoutOverride Optional explicit WON payout. Used by the parlay
+ *   roll-up to pay a reduced amount when one or more legs pushed (DraftKings
+ *   style: drop pushed legs, recompute payout = stake × Π(remaining odds)).
+ *   Ignored for non-WON results.
  */
-export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Promise<void> {
+export async function settleBet(
+    bet: Bet,
+    result: "WON" | "LOST" | "PUSH" | "VOID" | "CANCELLED",
+    payoutOverride?: number,
+): Promise<void> {
     const batch = writeBatch(db);
 
     // 1. Update bet status
@@ -961,14 +1019,17 @@ export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Prom
 
     // 2. Update user wallet and record
     const userRef = doc(db, "userInfo", bet.userID);
-    const boost = (bet as any).boostApplied as BoostType | null ?? null;
+    const boost: BoostType | null = bet.boostApplied ?? null;
 
     if (result === "WON") {
-        let payout = bet.potentialPayout;
-        // double_payout: add the profit again (doubles profit, not stake)
+        const basePayout = (typeof payoutOverride === "number" && Number.isFinite(payoutOverride))
+            ? payoutOverride
+            : bet.potentialPayout;
+        let payout = basePayout;
+        // double_payout: add the (override-relative) profit again
         if (boost === 'double_payout' && !bet.isFree) {
-            const profit = bet.potentialPayout - bet.stake;
-            payout = bet.potentialPayout + profit;
+            const profit = basePayout - bet.stake;
+            payout = basePayout + profit;
         }
         batch.update(userRef, {
             money: increment(payout),
@@ -986,10 +1047,166 @@ export async function settleBet(bet: Bet, result: "WON" | "LOST" | "VOID"): Prom
                 losses: increment(1),
             });
         }
+    } else if (result === "PUSH" || result === "VOID" || result === "CANCELLED") {
+        // Refund stake (no wins/losses change). Free bets had no debit, so skip.
+        if (!bet.isFree) {
+            batch.update(userRef, {
+                money: increment(bet.stake),
+            });
+        }
     }
-    // VOID: cancelled — no payout, no win/loss recorded
 
     await batch.commit();
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  PARLAY ROLL-UP
+// ─────────────────────────────────────────────────────────────────
+// Pure roll-up logic + types live in ./parlayRollup so unit tests don't
+// have to drag in the firebase SDK.
+import { computeParlayRollup } from "./parlayRollup";
+export { computeParlayRollup } from "./parlayRollup";
+export type { ParlayLegResult, ParlayRollup } from "./parlayRollup";
+
+/**
+ * Updates a single parlay leg's result and, if the bet is now fully decided,
+ * settles it via `settleBet` — all atomically.
+ *
+ * Idempotent:
+ *   - If `bet.status !== 'PENDING'`, no-op (already settled).
+ *   - If the targeted leg already has a non-PENDING result, no-op.
+ *
+ * Called by the mock NFL settlement path and (eventually) the API settlement
+ * cron once each leg's underlying event finalizes.
+ */
+export async function recordParlayLegResult(
+    betId: string,
+    legIndex: number,
+    legResult: 'WON' | 'LOST' | 'PUSH' | 'VOID',
+): Promise<void> {
+    await runTransaction(db, async (transaction) => {
+        const betRef = doc(db, "bets", betId);
+        const snap = await transaction.get(betRef);
+        if (!snap.exists()) return;
+
+        const data = snap.data();
+        const status = (data.status ?? "PENDING") as BetStatus;
+        if (status !== "PENDING") return; // already settled — idempotent no-op
+
+        const rawLegs = Array.isArray(data.parlayLegs) ? data.parlayLegs : [];
+        if (legIndex < 0 || legIndex >= rawLegs.length) return;
+
+        const targetLeg = rawLegs[legIndex];
+        const currentLegResult = (targetLeg?.result ?? 'PENDING') as string;
+        if (currentLegResult !== 'PENDING') return; // leg already decided — no-op
+
+        // Write the per-leg result.
+        const nextLegs = rawLegs.map((leg: any, idx: number) => {
+            if (idx !== legIndex) return leg;
+            return { ...leg, result: legResult };
+        });
+        transaction.update(betRef, { parlayLegs: nextLegs });
+
+        // Now decide whether the whole bet rolls up.
+        const stake = Number(data.stake) || 0;
+        const rollup = computeParlayRollup(nextLegs, stake);
+        if (rollup.state === 'PENDING') return;
+
+        // Final write: status + wallet + wins/losses, all in this same txn.
+        const userRef = doc(db, "userInfo", String(data.userID ?? ""));
+        const boost = (data.boostApplied as BoostType | null) ?? null;
+        const isFree = data.isFree === true;
+
+        transaction.update(betRef, {
+            status:    rollup.state,
+            settledAt: Timestamp.now(),
+        });
+
+        if (rollup.state === 'WON') {
+            let payout = rollup.payout;
+            if (boost === 'double_payout' && !isFree) {
+                const profit = rollup.payout - stake;
+                payout = rollup.payout + profit;
+            }
+            transaction.update(userRef, {
+                money: increment(payout),
+                wins:  increment(1),
+            });
+        } else if (rollup.state === 'LOST') {
+            if (boost === 'money_back' && !isFree) {
+                transaction.update(userRef, {
+                    money:  increment(stake),
+                    losses: increment(1),
+                });
+            } else {
+                transaction.update(userRef, { losses: increment(1) });
+            }
+        } else if (rollup.state === 'PUSH') {
+            if (!isFree) {
+                transaction.update(userRef, { money: increment(stake) });
+            }
+        }
+    });
+}
+
+/**
+ * Re-evaluates a parlay bet's current legs and settles it if all legs are
+ * decided. Useful when something other than `recordParlayLegResult` updated
+ * legs (e.g. a backfill script), or to nudge a bet whose final-leg write
+ * failed mid-flight.
+ *
+ * Idempotent: no-op when the bet is already settled or still has PENDING legs.
+ */
+export async function settleParlayBetIfReady(betId: string): Promise<void> {
+    await runTransaction(db, async (transaction) => {
+        const betRef = doc(db, "bets", betId);
+        const snap = await transaction.get(betRef);
+        if (!snap.exists()) return;
+
+        const data = snap.data();
+        const status = (data.status ?? "PENDING") as BetStatus;
+        if (status !== "PENDING") return;
+        if (data.betType !== "parlay") return;
+
+        const legs = Array.isArray(data.parlayLegs) ? data.parlayLegs : [];
+        const stake = Number(data.stake) || 0;
+        const rollup = computeParlayRollup(legs, stake);
+        if (rollup.state === 'PENDING') return;
+
+        const userRef = doc(db, "userInfo", String(data.userID ?? ""));
+        const boost = (data.boostApplied as BoostType | null) ?? null;
+        const isFree = data.isFree === true;
+
+        transaction.update(betRef, {
+            status:    rollup.state,
+            settledAt: Timestamp.now(),
+        });
+
+        if (rollup.state === 'WON') {
+            let payout = rollup.payout;
+            if (boost === 'double_payout' && !isFree) {
+                const profit = rollup.payout - stake;
+                payout = rollup.payout + profit;
+            }
+            transaction.update(userRef, {
+                money: increment(payout),
+                wins:  increment(1),
+            });
+        } else if (rollup.state === 'LOST') {
+            if (boost === 'money_back' && !isFree) {
+                transaction.update(userRef, {
+                    money:  increment(stake),
+                    losses: increment(1),
+                });
+            } else {
+                transaction.update(userRef, { losses: increment(1) });
+            }
+        } else if (rollup.state === 'PUSH') {
+            if (!isFree) {
+                transaction.update(userRef, { money: increment(stake) });
+            }
+        }
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────

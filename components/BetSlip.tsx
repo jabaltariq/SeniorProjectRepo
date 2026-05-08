@@ -10,6 +10,7 @@ interface BetSlipProps {
   parlaySelections: Array<{ market: Market; option: MarketOption }>;
   activeBets: Bet[];
   onPlaceBet: (stake: number, betType?: 'single' | 'parlay') => void;
+  onClose: () => void;
   onClear: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
   balance: number;
@@ -22,6 +23,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                                                   parlaySelections,
                                                   activeBets,
                                                   onPlaceBet,
+                                                  onClose,
                                                   onClear,
                                                   onSelectBet,
                                                   balance,
@@ -178,7 +180,13 @@ export const BetSlip: React.FC<BetSlipProps> = ({
               <span className="text-slate-300">Balance</span>
               <span className="font-bold text-violet-300">${balance.toFixed(2)}</span>
             </div>
-            <button type="button" className="text-slate-500 hover:text-slate-300 transition-colors" title="Close bet slip">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-slate-500 hover:text-slate-300 transition-colors"
+              title="Close bet slip"
+              aria-label="Close bet slip"
+            >
               <X size={16} />
             </button>
           </div>

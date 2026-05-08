@@ -119,9 +119,11 @@ export function useBettingViewModel() {
         ? parlaySelections.map((s) => ({
           marketId:    s.market.id,
           marketTitle: s.market.title,
+          sportKey:    s.market.sport_key,
           optionId:    s.option.id,
           optionLabel: s.option.label,
           odds:        s.option.odds,
+          marketKey:   s.option.marketKey ?? 'h2h',
         }))
         : undefined;
 
@@ -161,7 +163,18 @@ export function useBettingViewModel() {
         setBalance(result.newBalance);
         localStorage.setItem('userMoney', String(result.newBalance));
         setActiveBets((prev) => [newBet, ...prev]);
+        // Clear the slip after a successful placement so the user can't
+        // accidentally double-submit. For singles, dropping `betSelection`
+        // is enough to gray out the singles button (BetSlip's
+        // `singlesPlaceDisabled` keys off `!selection`). For parlays we ALSO
+        // need to empty `parlaySelections` because the parlays button keys
+        // off `parlaySelections.length >= 2`; without this, the same parlay
+        // legs sit in the slip post-placement and a second click would place
+        // a duplicate bet.
         setBetSelection(null);
+        if (isParlayBet) {
+          setParlaySelections([]);
+        }
         // Clear the boost after successful placement
         onBoostUsed?.();
       } else {
