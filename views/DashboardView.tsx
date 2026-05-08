@@ -26,7 +26,7 @@ import {
 import { MarketType, type Market, type MarketOption, type Bet } from '../models';
 import { BetSlip } from '../components/BetSlip';
 import { Leaderboard } from '../components/Leaderboard';
-import { SocialView } from '../components/SocialView';
+import { SocialMessagingView } from '../components/SocialMessagingView';
 import { HomeLanding } from '../components/HomeLanding';
 import { SettingsView } from './SettingsView';
 import { BetOfTheDayCard } from '../components/Betofthedaycard';
@@ -652,7 +652,17 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'LEADERBOARD':
         return <Leaderboard entries={leaderboardEntries} />;
       case 'SOCIAL':
-        return <SocialView friends={friends} activities={activity} onChallenge={onChallenge} bets={betList} userPrivacy={userPrivacy} friendRequests={friendReqs} userName={userName}/>;
+        return (
+          <SocialMessagingView
+            friends={friends}
+            activities={activity}
+            onChallenge={onChallenge}
+            bets={betList}
+            userPrivacy={userPrivacy}
+            friendRequests={friendReqs}
+            userName={userName}
+          />
+        );
         
       case 'PROFILE':
         return (

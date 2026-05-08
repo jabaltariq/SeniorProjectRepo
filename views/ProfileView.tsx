@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Settings,
   Eye,
@@ -50,6 +50,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   themeSaving,
   onThemeModeChange,
 }) => {
+  const navigate = useNavigate();
   // The app does not declare any <Route path="profile/:userId"> elements,
   // so useParams() returns an empty object. Parse the uid out of the pathname
   // ourselves so links like /profile/<uid> from the leaderboard, friends list,
@@ -374,6 +375,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     </p>
                     {isOwnProfile && (
                       <p className="mt-3 text-[10px] font-bold tracking-[0.22em] text-slate-500">PUBLIC</p>
+                    )}
+                    {!isOwnProfile && profileUserId && (
+                      <div className="mt-4">
+                        <button
+                          type="button"
+                          onClick={() => navigate('/friends', { state: { openChatWithUserId: profileUserId } })}
+                          className="inline-flex items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:border-blue-400/60 hover:bg-blue-500/20 transition-colors"
+                        >
+                          <Swords size={14} />
+                          Message
+                        </button>
+                      </div>
                     )}
                     {showEditUi && !publicPreview && (
                       <div className="mt-4 flex flex-wrap items-center gap-2">

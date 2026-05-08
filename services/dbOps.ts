@@ -1457,8 +1457,8 @@ const DEFAULT_ACCOUNT_DISPLAY: AccountDisplayConfig = {
     bets: [],
 };
 
-function uniqueStrings(values: string[]): string[] {
-    return Array.from(new Set(values));
+function uniqueStrings<T extends string>(values: T[]): T[] {
+    return Array.from(new Set(values)) as T[];
 }
 
 function normalizeAccountDisplay(value: unknown, legacySections?: unknown): AccountDisplayConfig {
@@ -2093,6 +2093,145 @@ export function subscribeToFriends(
         cancelled = true;
         unsub();
     };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  DIRECT MESSAGES (1:1 chat) — additive, isolated from betting flows
+// ─────────────────────────────────────────────────────────────────
+
+export interface DirectMessage {
+    id: string;
+    threadId: string;
+    fromUserId: string;
+    toUserId: string;
+    text: string;
+    createdAtMs: number;
+}
+
+export interface SendDirectMessageInput {
+    threadId: string;
+    messageId: string; // caller-provided so UI can be optimistic without duplicates
+    fromUserId: string;
+    toUserId: string;
+    text: string;
+    createdAtMs?: number;
+}
+
+/**
+ * Subscribes to messages for a given DM thread.
+ *
+ * Storage layout:
+ *   dmThreads/{threadId}/messages/{messageId}
+ *
+ * Using a subcollection avoids composite indexes and keeps blast radius low.
+ */
+export function subscribeToDirectMessages(
+    threadId: string | null | undefined,
+    onUpdate: (messages: DirectMessage[]) => void,
+    onError?: (err: Error) => void,
+    limitCount: number = 200,
+): () => void {
+    if (!threadId) {
+        onUpdate([]);
+        return () => {};
+    }
+
+    const q = query(
+        collection(db, "dmThreads", threadId, "messages"),
+        orderBy("createdAtMs", "asc"),
+        limit(limitCount),
+    );
+
+    const unsub = onSnapshot(
+        q,
+        (snapshot) => {
+            const rows: DirectMessage[] = snapshot.docs.map((d) => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    threadId,
+                    fromUserId: String(data["fromUserId"] ?? ""),
+                    toUserId: String(data["toUserId"] ?? ""),
+                    text: String(data["text"] ?? ""),
+                    createdAtMs: Number(data["createdAtMs"] ?? 0) || 0,
+                };
+            });
+            onUpdate(rows);
+        },
+        (err) => {
+            if (onError) onError(err);
+            else console.error("subscribeToDirectMessages onSnapshot failed", err);
+        },
+    );
+
+    return () => unsub();
+}
+
+/**
+ * Sends a direct message. Writes the message doc and updates the parent thread
+ * doc (participants + last message metadata) via merge writes.
+ */
+export async function sendDirectMessage(input: SendDirectMessageInput): Promise<{ success: true } | { success: false; error: string }> {
+    const { threadId, messageId, fromUserId, toUserId } = input;
+    const text = (input.text ?? "").trim();
+    if (!threadId || !messageId || !fromUserId || !toUserId) {
+        return { success: false, error: "MISSING_FIELDS" };
+    }
+    if (!text) {
+        return { success: false, error: "EMPTY_MESSAGE" };
+    }
+    const createdAtMs = Number(input.createdAtMs ?? Date.now());
+
+    try {
+        const threadRef = doc(db, "dmThreads", threadId);
+        const messageRef = doc(db, "dmThreads", threadId, "messages", messageId);
+
+        await Promise.all([
+            setDoc(messageRef, { threadId, fromUserId, toUserId, text, createdAtMs }, { merge: false }),
+            setDoc(threadRef, {
+                participants: [fromUserId, toUserId],
+                updatedAtMs: createdAtMs,
+                lastMessageText: text.slice(0, 220),
+                lastMessageAtMs: createdAtMs,
+            }, { merge: true }),
+        ]);
+
+        return { success: true };
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : "UNKNOWN";
+        console.error("sendDirectMessage failed", e);
+        return { success: false, error: msg };
+    }
+}
+
+/**
+ * Deletes a message only if the acting user is the sender.
+ * NOTE: Client-side guard only; Firestore security rules should enforce too.
+ */
+export async function deleteDirectMessage(
+    threadId: string,
+    messageId: string,
+    actingUserId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+    if (!threadId || !messageId || !actingUserId) return { success: false, error: "MISSING_FIELDS" };
+
+    const messageRef = doc(db, "dmThreads", threadId, "messages", messageId);
+    try {
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(messageRef);
+            if (!snap.exists()) return;
+            const data = snap.data();
+            const fromUserId = String((data as DocumentData)["fromUserId"] ?? "");
+            if (fromUserId !== actingUserId) {
+                throw new Error("NOT_OWNER");
+            }
+            tx.delete(messageRef);
+        });
+        return { success: true };
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : "UNKNOWN";
+        return { success: false, error: msg };
+    }
 }
 
 export async function getFriends(uid : string) : Promise<Friend[]> {
