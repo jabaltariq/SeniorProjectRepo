@@ -183,6 +183,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const hasInitializedWinTracking = useRef(false);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
+  const seenWinningBetsStorageKey = userUid ? `bethub_seen_winning_bets:${userUid}` : '';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -421,9 +422,38 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   }, [betSelection, parlaySelections.length]);
 
   useEffect(() => {
+    seenWinningBetIds.current = new Set();
+    hasInitializedWinTracking.current = false;
+    setPendingWinBets([]);
+    setActiveWinBet(null);
+  }, [userUid]);
+
+  useEffect(() => {
+    if (!userUid) return;
+    if (props.activeBets.length === 0 && !hasInitializedWinTracking.current) return;
+
+    const readStoredSeenIds = () => {
+      if (typeof localStorage === 'undefined' || !seenWinningBetsStorageKey) return new Set<string>();
+      try {
+        const raw = localStorage.getItem(seenWinningBetsStorageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+      } catch {
+        return new Set<string>();
+      }
+    };
+
+    const writeStoredSeenIds = (ids: Set<string>) => {
+      if (typeof localStorage === 'undefined' || !seenWinningBetsStorageKey) return;
+      localStorage.setItem(seenWinningBetsStorageKey, JSON.stringify(Array.from(ids)));
+    };
+
     const winningBets = props.activeBets.filter((bet) => (bet.status ?? 'PENDING') === 'WON');
     if (!hasInitializedWinTracking.current) {
-      seenWinningBetIds.current = new Set(winningBets.map((bet) => bet.id));
+      const storedSeen = readStoredSeenIds();
+      winningBets.forEach((bet) => storedSeen.add(bet.id));
+      seenWinningBetIds.current = storedSeen;
+      writeStoredSeenIds(storedSeen);
       hasInitializedWinTracking.current = true;
       return;
     }
@@ -432,8 +462,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     if (unseen.length === 0) return;
 
     unseen.forEach((bet) => seenWinningBetIds.current.add(bet.id));
+    writeStoredSeenIds(seenWinningBetIds.current);
     setPendingWinBets((prev) => [...prev, ...unseen]);
-  }, [props.activeBets]);
+  }, [props.activeBets, seenWinningBetsStorageKey, userUid]);
 
   useEffect(() => {
     if (activeWinBet || pendingWinBets.length === 0) return;

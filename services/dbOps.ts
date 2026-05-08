@@ -1,6 +1,7 @@
 import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, deleteDoc, Timestamp, runTransaction, deleteField, query, where, orderBy, limit, writeBatch, increment, QueryDocumentSnapshot, DocumentData, DocumentReference, addDoc } from "firebase/firestore";
 import { db } from "@/models/constants.ts";
 import {Bet, LeaderboardEntry, ParlayLeg, BetStatus, Friend, SocialActivity, HeadToHead, HeadToHeadStatus} from "@/models";
+import { PROFILE_BACKGROUND_URLS } from "@/models/profileBackgrounds";
 import {randomInt} from "node:crypto";
 
 export var currBets = new Array<Bet>;
@@ -1399,7 +1400,7 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
             id:            docSnap.id,
             name,
             avatar:        name.slice(0, 2).toUpperCase(),
-            netWorth:      money,
+            netWorth:      Math.round(money),
             winRate,
             rank:          1,
             isCurrentUser: false,
@@ -1442,6 +1443,8 @@ export type AccountProfile = {
     name: string;
     email?: string;
     avatar: string;
+    customAvatarUrl?: string;
+    profileBackgroundUrl?: string;
     netWorth: number;
     wins: number;
     losses: number;
@@ -1525,7 +1528,13 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
         name,
         email: typeof data.email === "string" ? data.email : undefined,
         avatar: name.slice(0, 2).toUpperCase(),
-        netWorth: Number(data.money) || 0,
+        customAvatarUrl: typeof data.customAvatarUrl === "string" && data.customAvatarUrl.trim()
+            ? data.customAvatarUrl.trim()
+            : undefined,
+        profileBackgroundUrl: typeof data.profileBackgroundUrl === "string" && PROFILE_BACKGROUND_URLS.includes(data.profileBackgroundUrl as typeof PROFILE_BACKGROUND_URLS[number])
+            ? data.profileBackgroundUrl
+            : undefined,
+        netWorth: Math.round(Number(data.money) || 0),
         wins,
         losses,
         winRate,
@@ -1533,6 +1542,19 @@ export async function getAccountProfile(uid: string): Promise<AccountProfile | n
         unlockedAchievements,
         profileDisplay,
     };
+}
+
+export async function setCustomProfileAvatar(uid: string, imageUrl: string | null): Promise<void> {
+    await setDoc(doc(db, "userInfo", uid), {
+        customAvatarUrl: imageUrl && imageUrl.trim() ? imageUrl.trim() : deleteField(),
+    }, { merge: true });
+}
+
+export async function setUserProfileBackground(uid: string, imageUrl: string): Promise<void> {
+    if (!PROFILE_BACKGROUND_URLS.includes(imageUrl as typeof PROFILE_BACKGROUND_URLS[number])) return;
+    await setDoc(doc(db, "userInfo", uid), {
+        profileBackgroundUrl: imageUrl,
+    }, { merge: true });
 }
 
 export async function getAchievementDefinitions(): Promise<AchievementDefinition[]> {

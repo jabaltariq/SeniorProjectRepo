@@ -9,9 +9,10 @@ import {
   Target,
   Clock3,
   Swords,
+  Camera,
 } from 'lucide-react';
 import { CounterBetModal } from '../components/CounterBetModal';
-import { proposeHeadToHead } from '@/services/dbOps';
+import { proposeHeadToHead, sendFriendRequest } from '@/services/dbOps';
 import {
   getAccountProfile,
   getBets,
@@ -27,7 +28,9 @@ import {
 import type { Bet } from '../models';
 import { SettingsView } from './SettingsView';
 import { getUserStoreState } from '@/services/storeOps';
+import { uploadProfileAvatar } from '@/services/profileMediaOps';
 import { findStoreAvatar } from '@/models/storeItems';
+import { profileBackgroundForUid } from '@/models/profileBackgrounds';
 
 interface ProfileViewProps {
   userInitials: string;
@@ -73,6 +76,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // Loaded by the same loadAccount() effect below so we don't add another
   // request lifecycle to keep track of.
   const [equippedAvatarUrl, setEquippedAvatarUrl] = useState<string | null>(null);
+  const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null);
+  const [profileBackgroundUrl, setProfileBackgroundUrl] = useState<string | null>(null);
   const [netWorth, setNetWorth] = useState(balance);
   const [wins, setWins] = useState(0);
   const [losses, setLosses] = useState(0);
@@ -91,6 +96,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [isEditingBets, setIsEditingBets] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [publicPreview, setPublicPreview] = useState(false);
+  const [avatarUploadMessage, setAvatarUploadMessage] = useState<string | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [friendRequestState, setFriendRequestState] = useState<'idle' | 'sending' | 'sent'>('idle');
 
   // Counter-Bet (head-to-head) modal target.
   const [counterBetTarget, setCounterBetTarget] = useState<Bet | null>(null);
@@ -123,6 +131,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   useEffect(() => {
     let cancelled = false;
+    setFriendRequestState('idle');
 
     async function loadAccount() {
       if (!profileUserId) {
@@ -152,6 +161,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         if (profile) {
           setDisplayName(profile.name);
           setAvatarText(profile.avatar || userInitials || 'BH');
+          setCustomAvatarUrl(profile.customAvatarUrl ?? null);
+          setProfileBackgroundUrl(profile.profileBackgroundUrl ?? null);
           setNetWorth(isOwnProfile ? balance : profile.netWorth);
           setWins(profile.wins);
           setLosses(profile.losses);
@@ -169,6 +180,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         } else {
           setDisplayName(isOwnProfile ? userEmail.split('@')[0] || 'My account' : 'Account not found');
           setAvatarText(userInitials || 'BH');
+          setCustomAvatarUrl(null);
+          setProfileBackgroundUrl(null);
           setNetWorth(balance);
           setWins(0);
           setLosses(0);
@@ -233,6 +246,47 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }));
   }, [updateProfileDisplay]);
 
+  const handleAvatarUpload = async (file: File | undefined) => {
+    if (!file || !currentUserId || !isOwnProfile) return;
+
+    setAvatarUploadMessage(null);
+    setAvatarUploading(true);
+    const result = await uploadProfileAvatar(currentUserId, file);
+    setAvatarUploading(false);
+
+    if (result.success === true) {
+      setCustomAvatarUrl(result.url);
+      setAvatarUploadMessage('Profile picture updated.');
+      setTimeout(() => setAvatarUploadMessage(null), 3000);
+      return;
+    }
+
+    const error = result.error;
+    const message =
+      error === 'FILE_TOO_LARGE'
+        ? 'Choose an image under 5MB.'
+        : error === 'INVALID_FILE'
+          ? 'Choose a valid image file.'
+          : 'Upload failed. Try again.';
+    setAvatarUploadMessage(message);
+  };
+
+  const handleSendFriendRequest = async () => {
+    if (!currentUserId || isOwnProfile || !displayName || friendRequestState !== 'idle') return;
+
+    setFriendRequestState('sending');
+    try {
+      const result = await sendFriendRequest(displayName, currentUserId);
+      setFriendRequestState(result?.success ? 'sent' : 'idle');
+      if (!result?.success && result?.error) {
+        console.warn('Friend request rejected:', result.error);
+      }
+    } catch (error) {
+      console.error('sendFriendRequest failed', error);
+      setFriendRequestState('idle');
+    }
+  };
+
   const winRate = totalBets > 0 ? Math.round((wins / totalBets) * 100) : 0;
   const achievementCards = useMemo(() => {
     return achievementDefinitions.map((achievement) => {
@@ -283,8 +337,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   }, [computedUnlockedAchievementIds, unlockedAchievementIds, currentUserId, isOwnProfile]);
 
   const statCards = useMemo(() => {
+    const roundedNetWorth = Math.round(netWorth);
     return [
-      { id: 'netWorth' as const, label: 'Net Worth', value: `$${netWorth.toLocaleString()}`, tone: 'text-green-400' },
+      { id: 'netWorth' as const, label: 'Net Worth', value: `$${roundedNetWorth.toLocaleString()}`, tone: 'text-emerald-300' },
       { id: 'wins' as const, label: 'Wins', value: String(wins), tone: 'text-slate-200' },
       { id: 'losses' as const, label: 'Losses', value: String(losses), tone: 'text-slate-200' },
       { id: 'winRate' as const, label: 'Win Rate', value: `${winRate}%`, tone: 'text-slate-200' },
@@ -312,6 +367,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const viewingAsPublic = Boolean(isOwnProfile && publicPreview);
   const showEditUi = isOwnProfile && !viewingAsPublic;
+  const profileAvatarUrl = customAvatarUrl ?? equippedAvatarUrl;
+  const coverImageUrl = profileBackgroundUrl ?? profileBackgroundForUid(profileUserId, displayName);
   const statsForDisplay = !isOwnProfile || viewingAsPublic ? displayedStats : statsForSection;
   const achievementsForDisplay = !isOwnProfile || viewingAsPublic ? displayedAchievements : achievementsForSection;
   const betsForDisplay = !isOwnProfile || viewingAsPublic ? displayedBets : betsForSection;
@@ -330,9 +387,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       ) : (
         <div className="space-y-8">
-          <section className={`${sectionShell} overflow-hidden`}>
+          <section className={`${sectionShell} relative overflow-hidden bg-slate-950`}>
             {viewingAsPublic && (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-xs text-amber-100 sm:px-5">
+              <div className="relative z-20 flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-xs text-amber-100 sm:px-5">
                 <span className="font-medium">You&apos;re viewing your public profile.</span>
                 <button
                   type="button"
@@ -343,20 +400,31 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </button>
               </div>
             )}
-            <div className={`px-5 pb-6 sm:px-8 sm:pb-8 ${viewingAsPublic ? 'pt-6 sm:pt-8' : 'pt-8 sm:pt-10'}`}>
-              <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
+            <div
+              className="absolute inset-0 bg-cover bg-center opacity-85"
+              style={{ backgroundImage: `url("${coverImageUrl}")` }}
+              aria-hidden
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/68 to-slate-950/10" aria-hidden />
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/38 to-transparent" aria-hidden />
+            <div className="absolute inset-0 backdrop-blur-[1px]" aria-hidden />
+            <div className={`relative z-10 px-5 pb-6 sm:px-8 sm:pb-8 ${viewingAsPublic ? 'pt-7 sm:pt-9' : 'pt-9 sm:pt-12'}`}>
+              <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between lg:gap-10">
                 <div className="flex min-w-0 flex-1 gap-4 sm:gap-5">
                   <div className="relative shrink-0">
-                    <div className="h-24 w-24 rounded-full bg-gradient-to-br from-blue-500/25 via-slate-700 to-slate-800 p-[3px] shadow-lg shadow-black/25 ring-1 ring-white/[0.06] sm:h-28 sm:w-28">
-                      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-900">
-                        {equippedAvatarUrl ? (
+                    <div className="h-24 w-24 rounded-full bg-gradient-to-br from-white/45 via-blue-400/40 to-slate-900 p-[3px] shadow-2xl shadow-black/40 ring-1 ring-white/20 sm:h-28 sm:w-28">
+                      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-950">
+                        {profileAvatarUrl ? (
                           <img
-                            src={equippedAvatarUrl}
+                            src={profileAvatarUrl}
                             alt={`${displayName}'s avatar`}
                             className="h-full w-full object-cover"
                             loading="lazy"
                             referrerPolicy="no-referrer"
-                            onError={() => setEquippedAvatarUrl(null)}
+                            onError={() => {
+                              if (customAvatarUrl) setCustomAvatarUrl(null);
+                              else setEquippedAvatarUrl(null);
+                            }}
                           />
                         ) : (
                           <span className="text-2xl font-semibold tracking-tight text-blue-300 sm:text-3xl">
@@ -365,19 +433,45 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         )}
                       </div>
                     </div>
+                    {showEditUi && (
+                      <div className="mt-3 w-24 text-center sm:w-28">
+                        <label className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-full border border-white/15 bg-slate-950/70 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-200 shadow-lg shadow-black/25 transition-colors hover:border-blue-300/45 hover:bg-blue-500/15 ${avatarUploading ? 'pointer-events-none opacity-70' : ''}`}>
+                          <Camera size={12} aria-hidden />
+                          {avatarUploading ? 'Uploading' : 'Photo'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="sr-only"
+                            disabled={avatarUploading}
+                            onChange={(event) => {
+                              void handleAvatarUpload(event.target.files?.[0]);
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                        {avatarUploadMessage && (
+                          <p className="mt-2 text-[10px] leading-tight text-slate-300">{avatarUploadMessage}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="min-w-0 flex-1 text-left">
-                    <h2 className="text-xl font-semibold tracking-tight text-slate-100 sm:text-2xl">
-                      {isOwnProfile ? 'Account' : `${displayName}'s account`}
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.28em] text-blue-200/80">
+                      {isOwnProfile ? 'BetHub Profile' : 'Player Profile'}
+                    </p>
+                    <h2 className="text-2xl font-black tracking-tight text-white drop-shadow sm:text-4xl">
+                      {displayName}
                     </h2>
-                    <p className="mt-1 break-words text-sm leading-relaxed text-slate-500">
+                    <p className="mt-1 break-words text-sm leading-relaxed text-slate-300/85">
                       {isOwnProfile ? userEmail : `${displayName} on BetHub`}
                     </p>
                     {isOwnProfile && (
-                      <p className="mt-3 text-[10px] font-bold tracking-[0.22em] text-slate-500">PUBLIC</p>
+                      <p className="mt-3 text-[10px] font-bold tracking-[0.22em] text-slate-400">
+                        {customAvatarUrl ? 'CUSTOM PHOTO ACTIVE' : 'PUBLIC PREVIEW READY'}
+                      </p>
                     )}
                     {!isOwnProfile && profileUserId && (
-                      <div className="mt-4">
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={() => navigate('/friends', { state: { openChatWithUserId: profileUserId } })}
@@ -385,6 +479,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         >
                           <Swords size={14} />
                           Message
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSendFriendRequest()}
+                          disabled={friendRequestState !== 'idle'}
+                          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                            friendRequestState === 'sent'
+                              ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-200'
+                              : 'border-slate-500/40 bg-slate-950/45 text-slate-200 hover:border-blue-400/50 hover:bg-blue-500/15'
+                          } ${friendRequestState === 'sending' ? 'cursor-wait opacity-75' : ''}`}
+                        >
+                          {friendRequestState === 'sent'
+                            ? 'Request Sent'
+                            : friendRequestState === 'sending'
+                              ? 'Sending...'
+                              : 'Send Friend Request'}
                         </button>
                       </div>
                     )}
@@ -423,9 +533,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
 
                 {(statsForDisplay.length > 0 || isOwnProfile) && (
-                  <div className="min-w-0 flex-1 lg:border-l lg:border-slate-800/50 lg:pl-10">
+                  <div className="min-w-0 flex-1">
                     <div className="mb-4 flex items-center justify-between gap-3">
-                      <h3 className={`${sectionLabel} flex items-center gap-2`}>
+                      <h3 className={`${sectionLabel} flex items-center gap-2 text-slate-300/80`}>
                         <BarChart3 size={14} className="text-blue-400/90" aria-hidden />
                         Stats
                       </h3>
@@ -439,24 +549,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         </button>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
                       {statsForDisplay.map((card) => {
                         const isSelected = profileDisplay.stats.includes(card.id);
                         const isClickable = showEditUi && isEditingStats;
+                        const cardStyle = isClickable
+                          ? isSelected
+                            ? 'border-white/20 bg-white/[0.08] ring-1 ring-white/10'
+                            : 'border-white/10 bg-slate-950/30 opacity-60'
+                          : 'border-white/10 bg-white/[0.06]';
                         return (
                           <button
                             type="button"
                             key={card.id}
                             onClick={isClickable ? () => toggleStat(card.id) : undefined}
                             disabled={!isClickable}
-                            className={`rounded-xl border px-3 py-3.5 text-left transition-colors sm:px-4 sm:py-4 ${
-                              isSelected
-                                ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/20'
-                                : 'border-slate-800/80 bg-slate-900/40'
-                            } ${isClickable ? 'cursor-pointer hover:border-blue-400/60 hover:bg-slate-800/30' : 'cursor-default'}`}
+                            className={`rounded-xl border px-3 py-3 text-left shadow-inner shadow-white/[0.02] transition-colors ${cardStyle} ${
+                              isClickable ? 'cursor-pointer hover:border-white/25 hover:bg-white/[0.1]' : 'cursor-default'
+                            }`}
                           >
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{card.label}</p>
-                            <p className={`mt-1 text-lg font-semibold tabular-nums sm:text-xl ${card.tone}`}>{card.value}</p>
+                            <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400">{card.label}</p>
+                            <p className={`mt-1 text-xl font-black tabular-nums ${card.tone}`}>{card.value}</p>
                           </button>
                         );
                       })}
@@ -572,21 +685,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         const isClickable = showEditUi && isEditingBets;
                         const fade = fadeEligibility(bet);
                         const challengerStake = Math.round(bet.stake * (bet.odds - 1) * 100) / 100;
+                        const betCardStyle = isClickable
+                          ? isSelected
+                            ? 'border-white/20 bg-white/[0.06] ring-1 ring-white/10'
+                            : 'border-slate-800/80 bg-slate-950/25 opacity-60'
+                          : 'border-slate-800/80 bg-slate-950/30';
                         return (
                         <div
                           key={bet.id}
-                          className={`overflow-hidden rounded-xl border ${
-                            isSelected
-                              ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/15'
-                              : 'border-slate-800/80 bg-slate-900/40'
-                          }`}
+                          className={`overflow-hidden rounded-xl border shadow-inner shadow-white/[0.02] ${betCardStyle}`}
                         >
                         <button
                           type="button"
                           onClick={isClickable ? () => toggleBet(bet.id) : undefined}
                           disabled={!isClickable}
                           className={`w-full px-4 py-3 text-left transition-colors ${
-                            isClickable ? 'cursor-pointer hover:border-blue-400/70' : 'cursor-default'
+                            isClickable ? 'cursor-pointer hover:bg-white/[0.04]' : 'cursor-default'
                           }`}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -599,7 +713,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                                 {(bet.status ?? 'PENDING').toLowerCase()}
                               </span>
                               {isClickable && isSelected && (
-                                <Eye size={16} className="text-blue-300" aria-label="Shown on public profile" />
+                                <Eye size={16} className="text-slate-200" aria-label="Shown on public profile" />
                               )}
                             </div>
                           </div>
@@ -638,7 +752,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       })}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-slate-800/70 bg-slate-900/25 py-10 text-center">
+                    <div className="rounded-xl border border-dashed border-slate-800/70 bg-slate-950/25 py-10 text-center">
                       <Target className="mx-auto mb-3 text-slate-600" size={40} strokeWidth={1.5} />
                       <p className="font-medium text-slate-500">No featured bets to show yet</p>
                       <p className="mt-1 text-sm text-slate-600">
