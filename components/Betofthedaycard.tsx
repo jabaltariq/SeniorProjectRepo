@@ -44,11 +44,13 @@ export const BetOfTheDayCard: React.FC<BetOfTheDayCardProps> = ({ uid }) => {
         }
 
         const now = Timestamp.now();
-
+        if (now.seconds >= todaysBet.startsAt.seconds) {
+            setCardState('locked');
+            return;
+        }
 
         setCardState('ready');
     }
-
     useEffect(() => {
         if (!expanded) return;
         const cancelled = { value: false };
