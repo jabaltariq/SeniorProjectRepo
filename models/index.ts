@@ -55,6 +55,8 @@ export interface Bet {
   status?: BetStatus;           // ← ADDED: undefined on old bets = treat as PENDING
   eventId?: string;             // ← ADDED: Odds API event ID (singles only)
   sportKey?: string;            // ← ADDED: e.g. "basketball_nba" (singles only)
+  /** Singles: line type at placement (h2h / spreads / totals). Used for API score settlement. */
+  pickedMarketKey?: MarketOption['marketKey'];
   eventStartsAt?: Date;         // ← ADDED: kickoff time (singles only) — used by H2H lock
   settledAt?: Date;             // ← ADDED
   // Optional metadata persisted alongside bets in Firestore. Declared here so

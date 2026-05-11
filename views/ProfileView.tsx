@@ -409,7 +409,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                   <div className="min-w-0 flex-1 text-left">
                     <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.28em] text-blue-200/80">
-                      {isOwnProfile ? 'BetHub Profile' : 'Player Profile'}
+                      {isOwnProfile ? 'BetHub Profile' : 'Profile'}
                     </p>
                     <h2 className="text-2xl font-black tracking-tight text-white drop-shadow sm:text-4xl">
                       {displayName}

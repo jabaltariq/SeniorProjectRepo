@@ -9,6 +9,7 @@ import {
   listenForChange,
   subscribeToUserBets,
 } from '@/services/dbOps';
+import { settlePendingApiOddsBetsForUser } from '@/services/settleApiOddsBets';
 import { BoostType } from '@/services/dbOps';
 import { validateParlayAdd } from '@/services/parlayRules';
 
@@ -97,6 +98,19 @@ export function useBettingViewModel() {
     };
   }, [localStorage.getItem("userEmail")]);
 
+  // Odds API singles + parlays: poll /scores via proxy and settle completed events.
+  useEffect(() => {
+    const uid = localStorage.getItem('uid');
+    if (!uid) return;
+
+    void settlePendingApiOddsBetsForUser(uid);
+    const id = window.setInterval(() => {
+      const u = localStorage.getItem('uid');
+      if (u) void settlePendingApiOddsBetsForUser(u);
+    }, 90_000);
+    return () => window.clearInterval(id);
+  }, [localStorage.getItem('userEmail')]);
+
   /**
    * Places a bet, optionally with a weekly boost applied.
    * The boost is saved onto the bet doc and marked used atomically in Firestore.
@@ -184,6 +198,7 @@ export function useBettingViewModel() {
       parlayLegs,
       eventId:         singleEventId,
       sportKey:        singleSportKey,
+      pickedMarketKey: isParlayBet ? undefined : betSelection.option.marketKey ?? 'h2h',
       eventStartsAt:   singleEventStartsAt,
     };
 
@@ -289,6 +304,13 @@ export function useBettingViewModel() {
     });
   }, [flashParlayError]);
 
+  const focusQueuedSelection = useCallback((market: Market, option: MarketOption) => {
+    const key = `${market.id}:${option.id}`;
+    const exists = parlaySelections.some((sel) => `${sel.market.id}:${sel.option.id}` === key);
+    if (!exists) return;
+    setBetSelection({ market, option });
+  }, [parlaySelections]);
+
   return {
     balance,
     activeBets,
@@ -301,5 +323,6 @@ export function useBettingViewModel() {
     handleDailyBonus,
     clearBetSelection,
     selectBet,
+    focusQueuedSelection,
   };
 }

@@ -2,22 +2,10 @@
  * Express backend for BetHub
  * Handles auth and proxies Odds API requests (keeps API key server-side)
  *
- * TODO(settlement): The original `settleOpenBets` cron was wired up here but
- * its implementation file (`server/settlement.js`) was never committed to any
- * branch — git log -S 'settleOpenBets' shows the import landed in 55b3095
- * without the file. As a result `npm run server` has been crash-on-boot since
- * that commit. Today only the in-app `settleUserMockNflGameBets` path runs
- * (called from the frontend when a mock NFL game finalizes); API-game
- * settlement does not run anywhere. When somebody resurrects automatic API
- * settlement, plug it back in here:
- *   1. create `server/settlement.js` exporting `settleOpenBets()`
- *   2. uncomment the import + cron block below
- *   3. swap the 503 stub on POST /api/settle-bets for the real call
- *      The shared building blocks (`getPendingBets`, `settleBet`,
- *      `recordParlayLegResult`, `settleParlayBetIfReady`,
- *      `getAcceptedHeadToHead`, `settleHeadToHead`) already exist in
- *      services/dbOps.ts.
- *   - 5.8.2026 Aidan O'Halloran
+ * API game settlement: the client calls `settlePendingApiOddsBetsForUser` in
+ * services/settleApiOddsBets.ts (scores via GET /api/scores/:sportKey below).
+ * Mock NFL still uses `settleUserMockNflGameBets` when a mock game finalizes.
+ * POST /api/settle-bets remains a stub if you later add a server cron.
  */
 import dotenv from 'dotenv';
 import express from 'express';
@@ -132,6 +120,30 @@ app.get('/api/odds', async (req, res) => {
 app.get('/api/odds/:sportKey', async (req, res) => {
   try { await proxyOddsApiJson(res, req.params.sportKey, req.query); }
   catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+/** Odds API scores — same event ids as /odds; used to settle API singles/parlays. */
+app.get('/api/scores/:sportKey', async (req, res) => {
+  try {
+    if (!ODDS_API_KEY) {
+      return res.status(503).json({
+        message: 'Server has no ODDS_API_KEY. Set ODDS_API_KEY in .env or .env.local and restart the API.',
+      });
+    }
+    const u = new URL(
+      `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(req.params.sportKey)}/scores`,
+    );
+    for (const [k, raw] of Object.entries(req.query)) {
+      if (k === 'apiKey') continue;
+      u.searchParams.set(k, Array.isArray(raw) ? raw.join(',') : String(raw));
+    }
+    u.searchParams.set('apiKey', ODDS_API_KEY);
+    const response = await fetch(u);
+    const data = await response.json().catch(() => []);
+    return res.status(response.status).json(data);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 app.get('/api/sports', async (req, res) => {

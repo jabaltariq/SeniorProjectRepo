@@ -44,6 +44,14 @@ import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
 import { computeParlayRollup } from '@/services/parlayRollup';
+import { formatAmericanOddsLine } from '@/lib/oddsAmericanFormat';
+import {
+  mlDecimalsForFavorite,
+  randomSpreadMagnitudeHalf,
+  randomTotalLineHalf,
+  spreadSideDecimals,
+  totalSideDecimals,
+} from '@/lib/mockNflGameGenerator';
 import { WinCelebrationModal } from '../components/WinCelebrationModal';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
@@ -112,6 +120,7 @@ interface DashboardViewProps {
   onPlaceBet: (stake: number, betType?: 'single' | 'parlay', boost?: BoostType | null, onBoostUsed?: () => void) => void;
   onClearBet: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
+  onFocusQueuedSelection: (market: Market, option: MarketOption) => void;
   onDailyBonus: () => void;
   onLogout: () => void;
   onSetView: (view: string) => void;
@@ -156,6 +165,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onPlaceBet,
     onClearBet,
     onSelectBet,
+    onFocusQueuedSelection,
     onDailyBonus,
     onLogout,
     onSetView,
@@ -193,7 +203,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const normalizeSpreadLine = (line: number) => (line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1));
   const pickRandom = <T,>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
   const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
-  const decimalOdds = () => Number(randomBetween(1.72, 2.25).toFixed(2));
   const randomWeek = () => Math.floor(randomBetween(1, 19));
 
   const makeMockGame = (idPrefix: string, previous?: MockNflGameState): MockNflGameState => {
@@ -207,20 +216,25 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       guard += 1;
     }
 
-    const spreadMag = Number(randomBetween(1.5, 7.5).toFixed(1));
+    const spreadMag = randomSpreadMagnitudeHalf();
     const awayFavored = Math.random() < 0.5;
     const spreadLine = awayFavored ? -spreadMag : spreadMag;
+    const ml = mlDecimalsForFavorite(awayFavored);
+    const sp = spreadSideDecimals();
+    const tot = totalSideDecimals();
     return {
       id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       week: randomWeek(),
       awayTeam,
       homeTeam,
-      awayOdds: decimalOdds(),
-      homeOdds: decimalOdds(),
-      totalOverOdds: decimalOdds(),
-      totalUnderOdds: decimalOdds(),
+      awayOdds: ml.away,
+      homeOdds: ml.home,
+      spreadAwayOdds: sp.away,
+      spreadHomeOdds: sp.home,
+      totalOverOdds: tot.over,
+      totalUnderOdds: tot.under,
       spreadLine,
-      totalLine: Number(randomBetween(39.5, 53.5).toFixed(1)),
+      totalLine: randomTotalLineHalf(),
       status: 'UPCOMING',
       awayScore: null,
       homeScore: null,
@@ -507,8 +521,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     startTime: new Date(game.updatedAtMs).toISOString(),
     status: game.status === 'FINAL' ? 'CLOSED' : 'UPCOMING',
     options: [
-      { id: `${game.id}-spread-away`, label: `${game.awayTeam} ${normalizeSpreadLine(game.spreadLine)}`, odds: game.awayOdds, marketKey: 'spreads' },
-      { id: `${game.id}-spread-home`, label: `${game.homeTeam} ${normalizeSpreadLine(-game.spreadLine)}`, odds: game.homeOdds, marketKey: 'spreads' },
+      { id: `${game.id}-spread-away`, label: `${game.awayTeam} ${normalizeSpreadLine(game.spreadLine)}`, odds: game.spreadAwayOdds ?? game.awayOdds, marketKey: 'spreads' },
+      { id: `${game.id}-spread-home`, label: `${game.homeTeam} ${normalizeSpreadLine(-game.spreadLine)}`, odds: game.spreadHomeOdds ?? game.homeOdds, marketKey: 'spreads' },
       { id: `${game.id}-total-over`, label: `Over ${game.totalLine.toFixed(1)}`, odds: game.totalOverOdds, marketKey: 'totals' },
       { id: `${game.id}-total-under`, label: `Under ${game.totalLine.toFixed(1)}`, odds: game.totalUnderOdds, marketKey: 'totals' },
       { id: `${game.id}-ml-away`, label: game.awayTeam, odds: game.awayOdds, marketKey: 'h2h' },
@@ -1267,7 +1281,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       )}
                                     </div>
                                     <p className="mt-2 text-[11px] text-slate-400">
-                                      Odds {game.awayOdds.toFixed(2)} / {game.homeOdds.toFixed(2)}
+                                      ML {formatAmericanOddsLine(game.awayOdds)} / {formatAmericanOddsLine(game.homeOdds)}
                                     </p>
                                     <div className="mt-2 space-y-1">
                                       {game.status === 'FINAL' ? (
@@ -1338,7 +1352,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                        <p className="text-lg leading-none font-semibold text-blue-300">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1358,7 +1372,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                        <p className="text-lg leading-none font-semibold text-blue-300">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1378,7 +1392,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                        <p className="text-lg leading-none font-semibold text-blue-300">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1459,7 +1473,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                                   >
                                                     <p className="text-[10px] text-slate-400 truncate">{opt.label}</p>
                                                     <p className={`text-sm font-semibold ${isOptionSelected(market, opt) ? 'text-violet-200' : 'text-blue-300'}`}>
-                                                      {opt.odds.toFixed(2)}
+                                                      {formatAmericanOddsLine(opt.odds)}
                                                     </p>
                                                   </button>
                                               ) : (
@@ -1608,6 +1622,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 onPlaceBet={handlePlaceBetWithBoost}
                 onClose={() => setIsBetSlipCollapsed(true)}
                 onSelectBet={onSelectBet}
+                onFocusSelection={onFocusQueuedSelection}
                 balance={balance}
                 activeBoost={activeBoost}
                 limitError={null}

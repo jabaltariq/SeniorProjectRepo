@@ -14,6 +14,7 @@ interface BetSlipProps {
   onClose: () => void;
   onClear: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
+  onFocusSelection: (market: Market, option: MarketOption) => void;
   balance: number;
   activeBoost: BoostType | null;
   limitError: string | null;
@@ -37,6 +38,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                                                   onClose,
                                                   onClear,
                                                   onSelectBet,
+                                                  onFocusSelection,
                                                   balance,
                                                   activeBoost,
                                                   limitError,
@@ -177,8 +179,11 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     const key = `${selection.market.id}:${selection.option.id}`;
     if (previousSelectionKey.current === key) return;
     previousSelectionKey.current = key;
+    // With 2+ legs we’re building a parlay queue; don’t force Singles when
+    // the user adds another pick (that was hiding the Parlays tab).
+    if (parlaySelections.length >= 2) return;
     setTab('SINGLES');
-  }, [selection]);
+  }, [selection, parlaySelections.length]);
 
   const setStakeFromInput = (raw: string) => {
     const cleaned = raw.replace(/[^\d.]/g, '');
@@ -200,6 +205,9 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   const singlesPlaceDisabled = isSinglesEmpty || !isAffordable || stake <= 0 || !!limitError;
   const parlayPlaceDisabled  = !hasMinimumParlayLegs || !isAffordable || stake <= 0 || !!limitError;
   const tabLabels: Record<SlipTab, string> = { SINGLES: 'Singles', PARLAYS: 'Parlays' };
+  const selectionKey =
+    selection ? `${selection.market.id}:${selection.option.id}` : '';
+  const hasMultipleQueuedPicks = parlaySelections.length >= 2;
 
   const cardClass = 'rounded-xl border border-slate-800 bg-[#100d1f]';
 
@@ -459,6 +467,77 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                   </button>
                 </div>
 
+                {hasMultipleQueuedPicks ? (
+                  <div className={`${cardClass} p-2.5`}>
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-blue-300">
+                        {parlaySelections.length} queued singles
+                      </p>
+                    </div>
+                    <div className="max-h-52 space-y-2 overflow-y-auto pr-0.5">
+                      {parlayLegs.map((leg) => {
+                        const isActive = `${leg.market.id}:${leg.option.id}` === selectionKey;
+                        const cardPayout = stake > 0 ? stake * leg.option.odds : 0;
+                        return (
+                          <div
+                            key={leg.id}
+                            className={`rounded-lg border p-2 ${
+                              isActive
+                                ? 'border-blue-500/60 bg-blue-500/10'
+                                : 'border-slate-700/80 bg-slate-900/70'
+                            }`}
+                          >
+                            <div className="mb-1 flex items-center justify-between gap-2">
+                              <span className="shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-black">
+                                Single
+                              </span>
+                              <span className="text-sm font-bold text-violet-300">{leg.odds}</span>
+                            </div>
+                            <p className="truncate text-base font-bold text-slate-100">{leg.option.label}</p>
+                            <div className="mt-1.5 grid grid-cols-2 gap-2 text-[10px]">
+                              <div>
+                                <p className="font-bold uppercase tracking-wide text-slate-500">Wager</p>
+                                <p className="font-semibold text-slate-200">${stake.toFixed(2)}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-bold uppercase tracking-wide text-slate-500">Payout</p>
+                                <p className="font-semibold text-slate-100">${cardPayout.toFixed(2)}</p>
+                              </div>
+                            </div>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isActive) onPlaceBet(stake, 'single');
+                                  else onFocusSelection(leg.market, leg.option);
+                                }}
+                                disabled={stake <= 0 || !isAffordable || !!limitError}
+                                className={`rounded-md py-1.5 text-[10px] font-bold uppercase tracking-wide transition-colors ${
+                                  stake <= 0 || !isAffordable || !!limitError
+                                    ? 'bg-slate-700 text-slate-500'
+                                    : isActive
+                                      ? 'bg-violet-600 text-white hover:bg-violet-500'
+                                      : 'border border-slate-600 bg-slate-800 text-slate-100 hover:border-blue-500/70'
+                                }`}
+                              >
+                                {isActive ? 'Place Single' : 'Select'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setTab('PARLAYS')}
+                                className="rounded-md border border-violet-500/50 bg-violet-600/25 py-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-100 transition-colors hover:bg-violet-600/40"
+                              >
+                                Add to Parlay
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {!hasMultipleQueuedPicks ? (
                 <div className={`${cardClass} p-3`}>
                   <div className="flex gap-2.5">
                     <button
@@ -479,6 +558,7 @@ export const BetSlip: React.FC<BetSlipProps> = ({
                 </span>
                   </div>
                 </div>
+                ) : null}
 
                 <div className={`${cardClass} p-3.5`}>
                   <div className="mb-2.5 flex items-center justify-between">

@@ -529,6 +529,9 @@ export interface MockNflGameState {
     homeTeam: string;
     awayOdds: number;
     homeOdds: number;
+    /** Spread leg prices (decimal); separate from moneyline. */
+    spreadAwayOdds: number;
+    spreadHomeOdds: number;
     totalOverOdds: number;
     totalUnderOdds: number;
     spreadLine: number;
@@ -562,6 +565,8 @@ export async function getUserMockNflGames(uid: string): Promise<MockNflGameState
                 homeTeam,
                 awayOdds: Number(row.awayOdds) || 1.91,
                 homeOdds: Number(row.homeOdds) || 1.91,
+                spreadAwayOdds: Number(row.spreadAwayOdds) || Number(row.awayOdds) || 1.91,
+                spreadHomeOdds: Number(row.spreadHomeOdds) || Number(row.homeOdds) || 1.91,
                 totalOverOdds: Number(row.totalOverOdds) || 1.91,
                 totalUnderOdds: Number(row.totalUnderOdds) || 1.91,
                 spreadLine: Number(row.spreadLine) || 0,
@@ -667,6 +672,41 @@ export async function settleUserMockNflGameBets(
         return "VOID";
     };
 
+    // Parlay legs carry stable option ids (e.g. "...-total-over"), which are
+    // safer than labels when mock lines get regenerated. Prefer id-based
+    // grading so totals/spreads don't get incorrectly VOIDed and reduced.
+    const outcomeForParlayLeg = (leg: ParlayLeg): "WON" | "LOST" | "PUSH" | "VOID" => {
+        const optionId = String(leg.optionId ?? "");
+        if (optionId.endsWith("-ml-away")) {
+            if (game.awayScore === game.homeScore) return "PUSH";
+            return game.awayScore > game.homeScore ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-ml-home")) {
+            if (game.awayScore === game.homeScore) return "PUSH";
+            return game.homeScore > game.awayScore ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-spread-away")) {
+            const result = margin + game.spreadLine;
+            if (result === 0) return "PUSH";
+            return result > 0 ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-spread-home")) {
+            const result = -margin - game.spreadLine;
+            if (result === 0) return "PUSH";
+            return result > 0 ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-total-over")) {
+            if (totalScore === game.totalLine) return "PUSH";
+            return totalScore > game.totalLine ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-total-under")) {
+            if (totalScore === game.totalLine) return "PUSH";
+            return totalScore < game.totalLine ? "WON" : "LOST";
+        }
+        // Legacy/fallback bets may not have optionId in expected format.
+        return outcomeFor(leg.optionLabel);
+    };
+
     const pending = (await getBets(uid)).filter(
         (b) => (b.status ?? "PENDING") === "PENDING",
     );
@@ -680,7 +720,7 @@ export async function settleUserMockNflGameBets(
                     const leg = legs[idx];
                     if (leg.marketId !== marketId) continue;
                     if (leg.result && leg.result !== "PENDING") continue; // already decided
-                    const result = outcomeFor(leg.optionLabel);
+                    const result = outcomeForParlayLeg(leg);
                     // A parlay leg that we can't recognize for this market is
                     // recorded as VOID — `computeParlayRollup` treats that the
                     // same as PUSH (drops the leg from the payout).
@@ -724,6 +764,7 @@ export async function addBet(uid: string, bet: Bet) {
         status:          "PENDING",
         eventId:         bet.eventId  ?? bet.marketId,
         sportKey:        bet.sportKey ?? "",
+        pickedMarketKey: bet.pickedMarketKey ?? null,
         // ──────────────────────────────────────────────────────
     });
     currBets.push(bet);
@@ -817,6 +858,7 @@ export async function placeSingleBet(uid: string, bet: Bet, boost: BoostType | n
                 status:          "PENDING",
                 eventId:         bet.eventId  ?? bet.marketId,
                 sportKey:        bet.sportKey ?? "",
+                pickedMarketKey: bet.pickedMarketKey ?? null,
                 eventStartsAt:   bet.eventStartsAt ? Timestamp.fromDate(bet.eventStartsAt) : null,
                 isFree:          false,
                 boostApplied:    boost ?? null,
@@ -892,6 +934,7 @@ export async function getBets(uid: string): Promise<Bet[]> {
             status:        (data.status   ?? "PENDING") as BetStatus,
             eventId:       data.eventId,
             sportKey:      data.sportKey,
+            pickedMarketKey: data.pickedMarketKey ?? undefined,
             eventStartsAt: data.eventStartsAt?.toDate?.(),
             settledAt:     data.settledAt?.toDate?.(),
             isFree:        data.isFree ?? false,
@@ -955,6 +998,7 @@ export function subscribeToUserBets(
                     status:        (data.status   ?? "PENDING") as BetStatus,
                     eventId:       data.eventId,
                     sportKey:      data.sportKey,
+                    pickedMarketKey: data.pickedMarketKey ?? undefined,
                     eventStartsAt: data.eventStartsAt?.toDate?.(),
                     settledAt:     data.settledAt?.toDate?.(),
                 };
@@ -1008,6 +1052,7 @@ export async function getPendingBets(): Promise<Bet[]> {
             status:   "PENDING",
             eventId:  data.eventId,
             sportKey: data.sportKey,
+            pickedMarketKey: data.pickedMarketKey ?? undefined,
             isFree:   data.isFree ?? false,
         });
     });

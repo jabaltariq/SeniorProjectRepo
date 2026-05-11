@@ -73,6 +73,7 @@ const App: React.FC = () => {
         onPlaceBet={dashboard.betting.handlePlaceBet}
         onClearBet={dashboard.betting.clearBetSelection}
         onSelectBet={dashboard.betting.selectBet}
+        onFocusQueuedSelection={dashboard.betting.focusQueuedSelection}
         onDailyBonus={dashboard.betting.handleDailyBonus}
         onLogout={dashboard.auth.logout}
         onSetView={dashboard.setView}
