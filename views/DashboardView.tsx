@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -46,6 +46,7 @@ import {
   ensureGlobalMockNflBoardSeeded,
   getBets,
   getUserMoney,
+  getUserProfileSummary,
   listenForChange,
   makeDmThreadId,
   saveGlobalMockNflGames,
@@ -67,6 +68,13 @@ import {
 } from '../components/WinCelebrationModal';
 import { collection, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
 import { db } from '@/models/constants.ts';
+import { UserAvatar } from '../components/UserAvatar';
+import {
+  compileHistoryBetPeers,
+  type HeadToHeadDocRow,
+  type GameChallengeDocRow,
+  type HistoryBetPeerInfo,
+} from '@/lib/historyBetPeerMap';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
 
@@ -405,6 +413,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const [historyYear, setHistoryYear] = useState<number | 'all'>('all');
   const [historyMinStake, setHistoryMinStake] = useState<number>(0);
   const [historyMaxStake, setHistoryMaxStake] = useState<number | null>(null);
+  /** When true, history lists only tickets linked to a counter-bet or game challenge. */
+  const [historyPeersOnly, setHistoryPeersOnly] = useState(false);
+  const [historyBetPeers, setHistoryBetPeers] = useState<Record<string, HistoryBetPeerInfo>>({});
+  const [historyPeerProfiles, setHistoryPeerProfiles] = useState<Record<string, Friend>>({});
+  const h2hOrigRowsRef = useRef<HeadToHeadDocRow[]>([]);
+  const h2hChallRowsRef = useRef<HeadToHeadDocRow[]>([]);
+  const gcChallRowsRef = useRef<GameChallengeDocRow[]>([]);
+  const gcOppRowsRef = useRef<GameChallengeDocRow[]>([]);
+  const activeBetsForHistoryRef = useRef<Bet[]>(props.activeBets);
 
   // Distinct years the user has bet in. Always derived from the realtime
   // activeBets list so newly-placed bets in fresh years show up automatically.
@@ -429,6 +446,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         const s = (b.status ?? 'PENDING').toLowerCase();
         if (!historyStatusSet.has(s)) return false;
       }
+      if (historyPeersOnly && !historyBetPeers[b.id]) return false;
       if (historyYear !== 'all' && b.placedAt.getFullYear() !== historyYear) return false;
       if (b.stake < historyMinStake) return false;
       if (historyMaxStake !== null && b.stake > historyMaxStake) return false;
@@ -441,7 +459,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'recent':
       default:            return list.sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime());
     }
-  }, [props.activeBets, historyStatusSet, historyYear, historyMinStake, historyMaxStake, historySort]);
+  }, [
+    props.activeBets,
+    historyStatusSet,
+    historyYear,
+    historyMinStake,
+    historyMaxStake,
+    historySort,
+    historyPeersOnly,
+    historyBetPeers,
+  ]);
 
   const toggleHistoryStatus = (status: string) =>
     setHistoryStatusSet((prev) => {
@@ -457,6 +484,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     setHistoryYear('all');
     setHistoryMinStake(0);
     setHistoryMaxStake(null);
+    setHistoryPeersOnly(false);
   };
 
   const hasActiveHistoryFilters =
@@ -464,7 +492,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     historyYear !== 'all' ||
     historyMinStake > 0 ||
     historyMaxStake !== null ||
-    historySort !== 'recent';
+    historySort !== 'recent' ||
+    historyPeersOnly;
 
   const handlePlaceBetWithBoost = (
     stake: number,
@@ -695,6 +724,86 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       createdAtMs: Date.now(),
     });
   };
+
+  const rebuildHistoryBetPeers = useCallback(() => {
+    const uid = userUid;
+    if (!uid) return;
+    const dedupeH2h = new Map<string, HeadToHeadDocRow>();
+    [...h2hOrigRowsRef.current, ...h2hChallRowsRef.current].forEach((r) => dedupeH2h.set(r.id, r));
+    const dedupeGc = new Map<string, GameChallengeDocRow>();
+    [...gcChallRowsRef.current, ...gcOppRowsRef.current].forEach((r) => dedupeGc.set(r.id, r));
+    setHistoryBetPeers(
+      compileHistoryBetPeers(uid, [...dedupeH2h.values()], [...dedupeGc.values()], activeBetsForHistoryRef.current),
+    );
+  }, [userUid]);
+
+  useEffect(() => {
+    activeBetsForHistoryRef.current = props.activeBets;
+    rebuildHistoryBetPeers();
+  }, [props.activeBets, rebuildHistoryBetPeers]);
+
+  const historyPeerLoadedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    historyPeerLoadedRef.current = new Set();
+    setHistoryPeerProfiles({});
+    if (!userUid) {
+      h2hOrigRowsRef.current = [];
+      h2hChallRowsRef.current = [];
+      gcChallRowsRef.current = [];
+      gcOppRowsRef.current = [];
+      setHistoryBetPeers({});
+      return;
+    }
+
+    const mapSnap = (snap: QuerySnapshot) =>
+      snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+
+    const qHOrig = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
+    const qHChall = query(collection(db, H2H_COL), where('challengerUserId', '==', userUid));
+    const qGcChall = query(collection(db, GC_COL), where('challengerUid', '==', userUid));
+    const qGcOpp = query(collection(db, GC_COL), where('opponentUid', '==', userUid));
+
+    const u1 = onSnapshot(qHOrig, (snap) => {
+      h2hOrigRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+    const u2 = onSnapshot(qHChall, (snap) => {
+      h2hChallRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+    const u3 = onSnapshot(qGcChall, (snap) => {
+      gcChallRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+    const u4 = onSnapshot(qGcOpp, (snap) => {
+      gcOppRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+
+    return () => {
+      u1();
+      u2();
+      u3();
+      u4();
+    };
+  }, [userUid, rebuildHistoryBetPeers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const p of Object.values(historyBetPeers)) {
+      const oid = p.opponentUid;
+      if (!oid || historyPeerLoadedRef.current.has(oid)) continue;
+      historyPeerLoadedRef.current.add(oid);
+      void getUserProfileSummary(oid).then((f) => {
+        if (cancelled || !f) return;
+        setHistoryPeerProfiles((prev) => ({ ...prev, [oid]: f }));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [historyBetPeers]);
 
 
   // ── Grab uid once for sidebar cards ────────────────────────────
@@ -982,6 +1091,19 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                       <StatusChip value="void"      label="Void"      tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
                       <StatusChip value="cancelled" label="Cancelled" tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
                       <StatusChip value="pending"   label="Pending"   tone="bg-blue-500/15 text-blue-300 border-blue-500/40" />
+                      <button
+                        type="button"
+                        onClick={() => setHistoryPeersOnly((v) => !v)}
+                        className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border transition-colors inline-flex items-center gap-1.5 ${
+                          historyPeersOnly
+                            ? 'bg-violet-500/20 text-violet-200 border-violet-500/45'
+                            : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+                        }`}
+                        title="Show only tickets linked to a counter-bet or NFL sim game challenge"
+                      >
+                        <Swords size={12} className="opacity-90" aria-hidden />
+                        Counters & challenges
+                      </button>
                     </div>
 
                     <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
@@ -1129,6 +1251,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         s === 'push'                         ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-amber-300' } :
                         (s === 'void' || s === 'cancelled')  ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-slate-300' } :
                                                                { label: 'Potential Payout', value: `$${bet.potentialPayout.toLocaleString()}`, color: 'text-blue-400' };
+                      const peer = historyBetPeers[bet.id];
+                      const peerFriend = peer ? historyPeerProfiles[peer.opponentUid] : undefined;
                       return (
                         <div key={bet.id} className={`glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all ${rowAccent}`}>
                           <div className="flex justify-between items-start mb-4">
@@ -1141,6 +1265,49 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               {pillLabel}
                             </span>
                           </div>
+                          {peer ? (
+                            <div className="mb-4">
+                              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                {peer.kind === 'counter' ? 'Counter-bet vs' : 'Game challenge vs'}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/profile/${peer.opponentUid}`)}
+                                className="group relative w-full max-w-md overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/50 text-left transition-colors hover:border-violet-500/40"
+                              >
+                                {peerFriend?.profileBackgroundUrl ? (
+                                  <div
+                                    className="absolute inset-0 bg-cover bg-center opacity-50 transition-opacity group-hover:opacity-60"
+                                    style={{ backgroundImage: `url("${peerFriend.profileBackgroundUrl}")` }}
+                                    aria-hidden
+                                  />
+                                ) : null}
+                                <div className="absolute inset-0 bg-gradient-to-r from-slate-950/92 via-slate-950/80 to-slate-950/55" aria-hidden />
+                                <div className="relative flex items-center gap-3 px-3 py-2.5">
+                                  <UserAvatar
+                                    initials={peerFriend?.avatar ?? '??'}
+                                    imageUrl={peerFriend?.avatarUrl}
+                                    alt={`${peerFriend?.name ?? 'Opponent'} avatar`}
+                                    className="h-11 w-11 shrink-0 rounded-xl ring-2 ring-slate-700/80 group-hover:ring-violet-500/40"
+                                    textClassName="text-xs text-violet-200"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-black text-slate-50 group-hover:text-white">
+                                      {peerFriend?.name ?? '…'}
+                                    </p>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 group-hover:text-slate-300">
+                                      Tap for profile
+                                    </p>
+                                  </div>
+                                  {peer.kind === 'counter' ? (
+                                    <Swords className="h-4 w-4 shrink-0 text-red-400/90 opacity-80 group-hover:opacity-100" aria-hidden />
+                                  ) : (
+                                    <Trophy className="h-4 w-4 shrink-0 text-amber-400/90 opacity-80 group-hover:opacity-100" aria-hidden />
+                                  )}
+                                </div>
+                              </button>
+                            </div>
+                          ) : null}
                           <div className="flex justify-between items-end border-t border-slate-800 pt-4">
                             <div className="grid grid-cols-2 gap-8">
                               <div>
