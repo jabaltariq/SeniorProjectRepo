@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HeadToHead, HeadToHeadStatus } from '../models';
 import {
   acceptHeadToHead,
@@ -7,11 +7,16 @@ import {
   getIncomingHeadToHead,
   getOutgoingHeadToHead,
   getUserName,
+  mapHeadToHead,
   proposeHeadToHead,
   type AcceptHeadToHeadResult,
   type DeclineOrCancelResult,
   type ProposeHeadToHeadResult,
 } from '../services/dbOps';
+import { collection, onSnapshot, query, where, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore';
+import { db } from '@/models/constants';
+
+const H2H_COLLECTION = 'headToHead';
 
 /**
  * Manages the current user's Head-to-Head challenges.
@@ -34,6 +39,117 @@ export function useHeadToHeadViewModel(currentUserId: string | null) {
   const [nameByUid, setNameByUid] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const origDocsRef = useRef<QueryDocumentSnapshot<DocumentData>[]>([]);
+  const challDocsRef = useRef<QueryDocumentSnapshot<DocumentData>[]>([]);
+
+  const mergeAndSetItems = useCallback(() => {
+    const merged = new Map<string, HeadToHead>();
+    for (const d of origDocsRef.current) {
+      merged.set(d.id, mapHeadToHead(d.id, d.data()));
+    }
+    for (const d of challDocsRef.current) {
+      merged.set(d.id, mapHeadToHead(d.id, d.data()));
+    }
+    const all = [...merged.values()].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
+    setItems(all);
+    setLoading(false);
+    setError(null);
+
+    if (!currentUserId || all.length === 0) return;
+
+    const opponentUids = new Set<string>();
+    all.forEach((h2h) => {
+      if (h2h.challengerUserId !== currentUserId) opponentUids.add(h2h.challengerUserId);
+      if (h2h.originalUserId !== currentUserId) opponentUids.add(h2h.originalUserId);
+    });
+
+    setNameByUid((prev) => {
+      const missing = [...opponentUids].filter((uid) => !prev[uid]);
+      if (missing.length === 0) return prev;
+      void Promise.all(
+        missing.map(async (uid) => [uid, await getUserName(uid).catch(() => uid)] as const),
+      ).then((fetched) => {
+        setNameByUid((p) => {
+          const next = { ...p };
+          fetched.forEach(([uid, name]) => {
+            next[uid] = name;
+          });
+          return next;
+        });
+      });
+      return prev;
+    });
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) {
+      origDocsRef.current = [];
+      challDocsRef.current = [];
+      setItems([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+
+    const qOrig = query(collection(db, H2H_COLLECTION), where('originalUserId', '==', currentUserId));
+    const qChall = query(collection(db, H2H_COLLECTION), where('challengerUserId', '==', currentUserId));
+
+    const unsubOrig = onSnapshot(
+      qOrig,
+      (snap) => {
+        origDocsRef.current = snap.docs;
+        mergeAndSetItems();
+      },
+      (e) => {
+        console.error('headToHead originalUserId listener', e);
+        setError(e.message);
+        setLoading(false);
+      },
+    );
+
+    const unsubChall = onSnapshot(
+      qChall,
+      (snap) => {
+        challDocsRef.current = snap.docs;
+        mergeAndSetItems();
+      },
+      (e) => {
+        console.error('headToHead challengerUserId listener', e);
+        setError(e.message);
+        setLoading(false);
+      },
+    );
+
+    return () => {
+      unsubOrig();
+      unsubChall();
+    };
+  }, [currentUserId, mergeAndSetItems]);
+
+  // ── Bucketing ──────────────────────────────────────────────────
+  const buckets = useMemo(() => {
+    const incoming: HeadToHead[] = [];
+    const outgoing: HeadToHead[] = [];
+    const active: HeadToHead[] = [];
+    const history: HeadToHead[] = [];
+    items.forEach((h2h) => {
+      const isOriginal = h2h.originalUserId === currentUserId;
+      const isChallenger = h2h.challengerUserId === currentUserId;
+      const status: HeadToHeadStatus = h2h.status;
+
+      if (status === 'PENDING_ACCEPT') {
+        if (isOriginal) incoming.push(h2h);
+        if (isChallenger) outgoing.push(h2h);
+      } else if (status === 'ACCEPTED') {
+        active.push(h2h);
+      } else {
+        history.push(h2h);
+      }
+    });
+    return { incoming, outgoing, active, history };
+  }, [items, currentUserId]);
 
   const refresh = useCallback(async () => {
     if (!currentUserId) {
@@ -47,8 +163,6 @@ export function useHeadToHeadViewModel(currentUserId: string | null) {
         getIncomingHeadToHead(currentUserId),
         getOutgoingHeadToHead(currentUserId),
       ]);
-      // Merge and dedupe (a user could in theory appear on both sides if the
-      // collection ever has weird data — stay defensive).
       const merged = new Map<string, HeadToHead>();
       [...incoming, ...outgoing].forEach((h2h) => merged.set(h2h.id, h2h));
       const all = [...merged.values()].sort(
@@ -56,63 +170,35 @@ export function useHeadToHeadViewModel(currentUserId: string | null) {
       );
       setItems(all);
 
-      // Resolve opponent display names. The "opponent" depends on perspective:
-      // for incoming, it's the challenger; for outgoing, it's the original.
       const opponentUids = new Set<string>();
       all.forEach((h2h) => {
         if (h2h.challengerUserId !== currentUserId) opponentUids.add(h2h.challengerUserId);
-        if (h2h.originalUserId   !== currentUserId) opponentUids.add(h2h.originalUserId);
+        if (h2h.originalUserId !== currentUserId) opponentUids.add(h2h.originalUserId);
       });
-      const missing = [...opponentUids].filter((uid) => !nameByUid[uid]);
-      if (missing.length > 0) {
-        const fetched = await Promise.all(
+      setNameByUid((prev) => {
+        const missing = [...opponentUids].filter((uid) => !prev[uid]);
+        if (missing.length === 0) return prev;
+        void Promise.all(
           missing.map(async (uid) => [uid, await getUserName(uid).catch(() => uid)] as const),
-        );
-        setNameByUid((prev) => {
-          const next = { ...prev };
-          fetched.forEach(([uid, name]) => { next[uid] = name; });
-          return next;
+        ).then((fetched) => {
+          setNameByUid((p) => {
+            const next = { ...p };
+            fetched.forEach(([uid, name]) => {
+              next[uid] = name;
+            });
+            return next;
+          });
         });
-      }
+        return prev;
+      });
     } catch (e) {
       console.error('Failed to load head-to-head challenges', e);
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
-  }, [currentUserId, nameByUid]);
-
-  useEffect(() => {
-    void refresh();
-    // We intentionally only depend on currentUserId — refresh's identity
-    // changes when nameByUid mutates, which would cause an infinite loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId]);
 
-  // ── Bucketing ──────────────────────────────────────────────────
-  const buckets = useMemo(() => {
-    const incoming: HeadToHead[] = [];
-    const outgoing: HeadToHead[] = [];
-    const active:   HeadToHead[] = [];
-    const history:  HeadToHead[] = [];
-    items.forEach((h2h) => {
-      const isOriginal   = h2h.originalUserId   === currentUserId;
-      const isChallenger = h2h.challengerUserId === currentUserId;
-      const status: HeadToHeadStatus = h2h.status;
-
-      if (status === 'PENDING_ACCEPT') {
-        if (isOriginal)   incoming.push(h2h);
-        if (isChallenger) outgoing.push(h2h);
-      } else if (status === 'ACCEPTED') {
-        active.push(h2h);
-      } else {
-        history.push(h2h);
-      }
-    });
-    return { incoming, outgoing, active, history };
-  }, [items, currentUserId]);
-
-  // ── Action wrappers ────────────────────────────────────────────
   const propose = useCallback(
     async (originalBetId: string): Promise<ProposeHeadToHeadResult> => {
       if (!currentUserId) {

@@ -212,12 +212,12 @@ export const BetOfTheDayCard: React.FC<BetOfTheDayCardProps> = ({ uid }) => {
                                             onClick={() => setSelected(prev => prev?.id === opt.id ? null : opt)}
                                             className={`rounded-lg border px-3 py-2 text-left transition-all ${
                                                 selectedOption?.id === opt.id
-                                                    ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                                    : 'border-slate-700 bg-slate-900 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                                    ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                                    : 'border-slate-700 bg-slate-900 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                             }`}
                                         >
                                             <p className="text-[10px] text-slate-400 truncate">{opt.label}</p>
-                                            <p className={`text-sm font-semibold ${selectedOption?.id === opt.id ? 'text-violet-200' : 'text-blue-300'}`}>
+                                            <p className={`text-sm font-semibold ${selectedOption?.id === opt.id ? 'text-[#7dd3fc]' : 'text-[#3FA9F5]'}`}>
                                                 {opt.odds.toFixed(2)}
                                             </p>
                                         </button>
@@ -231,7 +231,7 @@ export const BetOfTheDayCard: React.FC<BetOfTheDayCardProps> = ({ uid }) => {
                             disabled={!selectedOption || isSubmitting}
                             className={`w-full py-2.5 rounded-xl text-sm font-bold uppercase tracking-wide transition-all active:scale-95 ${
                                 selectedOption && !isSubmitting
-                                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-700/30'
+                                    ? 'bg-[#3FA9F5] hover:bg-[#2e9ae8] text-slate-950 shadow-md shadow-[#3FA9F5]/25'
                                     : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                             }`}
                         >

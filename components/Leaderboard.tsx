@@ -10,7 +10,7 @@ interface LeaderboardProps {
   entries: LeaderboardEntry[];
 }
 
-type SortKey = 'rank' | 'user' | 'netWorth' | 'winRate' | 'trend';
+type SortKey = 'rank' | 'user' | 'netWorth' | 'winRate' | 'challengeWins' | 'trend';
 type SortDir = 'asc' | 'desc';
 
 function trendScore(e: LeaderboardEntry): number {
@@ -43,6 +43,8 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
           return (a.netWorth - b.netWorth) * dir;
         case 'winRate':
           return (a.winRate - b.winRate) * dir;
+        case 'challengeWins':
+          return ((a.challengeWins ?? 0) - (b.challengeWins ?? 0)) * dir;
         case 'trend':
           return (trendScore(a) - trendScore(b)) * dir;
         default:
@@ -101,13 +103,14 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
               <SortHeader label="User" colKey="user" />
               <SortHeader label="Net Worth" colKey="netWorth" />
               <SortHeader label="Win Rate" colKey="winRate" />
+              <SortHeader label="Challenges" colKey="challengeWins" align="right" />
               <SortHeader label="Trend" colKey="trend" align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50">
             {entries.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-16 text-center">
+                <td colSpan={6} className="px-6 py-16 text-center">
                   <Trophy className="mx-auto text-slate-600 mb-3" size={40} />
                   <p className="text-slate-300 font-bold text-lg mb-1">No players on the board yet</p>
                   <p className="text-slate-500 text-sm max-w-md mx-auto">
@@ -165,6 +168,9 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {
                     </div>
                     <span className="text-xs font-bold text-slate-400">{entry.winRate}%</span>
                   </div>
+                </td>
+                <td className="px-6 py-4 text-right">
+                  <span className="font-black text-amber-200/90 tabular-nums">{entry.challengeWins ?? 0}</span>
                 </td>
                 <td className="px-6 py-4 text-right">
                   <TrendingUp className="inline text-green-400" size={16} />

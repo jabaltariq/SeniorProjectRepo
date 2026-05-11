@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type {Bet, Friend, LeaderboardEntry, SocialActivity} from '../models';
 import { useBettingViewModel } from './useBettingViewModel';
 import { useMarketsViewModel } from './useMarketsViewModel';
@@ -12,8 +12,10 @@ import {
   type UserThemeMode,
   subscribeToCommunityActivity,
   subscribeToFriendRequests,
-  subscribeToFriends
+  subscribeToFriends,
 } from '../services/dbOps';
+import { subscribeToPeerActivityFeed } from '@/services/peerActivityFeed';
+import { mergeActivityFeeds } from '@/lib/mergeActivityFeeds';
 
 /**
  * Composes betting + markets + auth for DashboardView.
@@ -33,7 +35,8 @@ export function useDashboardViewModel(auth: AuthViewModel) {
 
   const [friends, setFriends] = useState<Friend[]>([]);
   const [betList, setBetList] = useState<Bet[]>([]);
-  const [activities, setActivities] = useState<SocialActivity[]>([])
+  const [betActivities, setBetActivities] = useState<SocialActivity[]>([]);
+  const [peerActivities, setPeerActivities] = useState<SocialActivity[]>([]);
   const [view, setView] = useState<DashboardView>('MARKETS');
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
@@ -46,7 +49,7 @@ export function useDashboardViewModel(auth: AuthViewModel) {
   useEffect(() => {
     const unsubActivity = subscribeToCommunityActivity(
       ({ activities, bets }) => {
-        setActivities(activities);
+        setBetActivities(activities);
         setBetList(bets);
       },
       (err) => {
@@ -57,6 +60,19 @@ export function useDashboardViewModel(auth: AuthViewModel) {
       unsubActivity();
     };
   }, []);
+
+  useEffect(() => {
+    const unsubPeer = subscribeToPeerActivityFeed(
+      (rows) => setPeerActivities(rows),
+      (err) => console.error('Peer activity feed failed', err),
+    );
+    return () => unsubPeer();
+  }, []);
+
+  const activities = useMemo(
+    () => mergeActivityFeeds(betActivities, peerActivities, 60),
+    [betActivities, peerActivities],
+  );
 
   // Everything below depends on the *current* user (friend requests inbox,
   // profile fields, friends list, theme, leaderboard "isCurrentUser" flag).
@@ -74,6 +90,8 @@ export function useDashboardViewModel(auth: AuthViewModel) {
       setUserName(undefined);
       setUserPrivacy(false);
       setLeaderboardEntries([]);
+      setPeerActivities([]);
+      setBetActivities([]);
       return;
     }
 
@@ -117,10 +135,6 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     };
   }, [auth.userEmail]);
 
-  const handleChallenge = useCallback((friend: Friend) => {
-    alert(`Challenge request sent to ${friend.name}! Head-to-head competition initiated.`);
-  }, []);
-
   const updateThemeMode = useCallback(async (nextThemeMode: UserThemeMode) => {
     if (themeMode === nextThemeMode) return;
     const uid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null;
@@ -148,7 +162,6 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     markets,
     view,
     setView,
-    handleChallenge,
     leaderboardEntries,
     friends: friends,
     activity: activities,

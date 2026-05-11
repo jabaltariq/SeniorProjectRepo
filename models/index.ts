@@ -55,6 +55,8 @@ export interface Bet {
   status?: BetStatus;           // ← ADDED: undefined on old bets = treat as PENDING
   eventId?: string;             // ← ADDED: Odds API event ID (singles only)
   sportKey?: string;            // ← ADDED: e.g. "basketball_nba" (singles only)
+  /** Singles: line type at placement (h2h / spreads / totals). Used for API score settlement. */
+  pickedMarketKey?: MarketOption['marketKey'];
   eventStartsAt?: Date;         // ← ADDED: kickoff time (singles only) — used by H2H lock
   settledAt?: Date;             // ← ADDED
   // Optional metadata persisted alongside bets in Firestore. Declared here so
@@ -72,9 +74,14 @@ export interface LeaderboardEntry {
   profileBackgroundUrl?: string;
   netWorth: number;
   winRate: number;
+  /** Accepted peer game challenges won (settled). */
+  challengeWins: number;
   rank: number;
   isCurrentUser?: boolean;
 }
+
+/** `bet` = legacy slip row; peer rows come from head-to-head or game-challenge feeds. */
+export type SocialActivityKind = 'bet' | 'peer_counter' | 'peer_challenge';
 
 export interface SocialActivity {
   id: string;
@@ -86,6 +93,16 @@ export interface SocialActivity {
   action: string;
   target: string;
   timestamp: string;
+  /** Merge sort with peer feed (epoch ms). Bet rows set from placedAt. */
+  sortKey?: number;
+  activityKind?: SocialActivityKind;
+  /** Other participant in a counter or challenge row. */
+  peerUserId?: string;
+  peerUserName?: string;
+  peerUserAvatar?: string;
+  peerUserAvatarUrl?: string;
+  peerH2hId?: string;
+  peerChallengeId?: string;
 }
 
 export interface Friend {
@@ -107,6 +124,29 @@ export interface Challenge {
   marketTitle: string;
   stake: number;
   status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'COMPLETED';
+}
+
+// ── Global NFL sim board (shared mock games) ─────────────────────
+export type MockNflWinner = 'HOME' | 'AWAY' | null;
+
+export interface MockNflGameState {
+  id: string;
+  week: number;
+  awayTeam: string;
+  homeTeam: string;
+  awayOdds: number;
+  homeOdds: number;
+  spreadAwayOdds: number;
+  spreadHomeOdds: number;
+  totalOverOdds: number;
+  totalUnderOdds: number;
+  spreadLine: number;
+  totalLine: number;
+  status: 'UPCOMING' | 'FINAL';
+  awayScore: number | null;
+  homeScore: number | null;
+  winner: MockNflWinner;
+  updatedAtMs: number;
 }
 
 // ── Head-to-Head (peer-to-peer side wager) ───────────────────────

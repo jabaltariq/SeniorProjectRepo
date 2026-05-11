@@ -49,6 +49,18 @@ export default defineConfig(() => {
               rewrite: (path) => path.replace(/^\/api\/sports/, '/v4/sports'),
               configure: addApiKeyProxy(oddsApiKey),
             },
+            '/api/scores': {
+              target: 'https://api.the-odds-api.com',
+              changeOrigin: true,
+              rewrite: (path) => {
+                const [pathname, query = ''] = path.split('?');
+                const m = pathname.match(/^\/api\/scores\/([^/]+)$/);
+                const sport = m?.[1] ?? '';
+                const q = query ? `?${query}` : '';
+                return `/v4/sports/${sport}/scores${q}`;
+              },
+              configure: addApiKeyProxy(oddsApiKey),
+            },
           },
     },
     plugins: [react()],

@@ -9,6 +9,8 @@ import {
   listenForChange,
   subscribeToUserBets,
 } from '@/services/dbOps';
+import { settlePendingApiOddsBetsForUser } from '@/services/settleApiOddsBets';
+import { settleActiveGameChallengesGlobal } from '@/services/gameChallenges';
 import { BoostType } from '@/services/dbOps';
 import { validateParlayAdd } from '@/services/parlayRules';
 
@@ -97,6 +99,21 @@ export function useBettingViewModel() {
     };
   }, [localStorage.getItem("userEmail")]);
 
+  // Odds API singles + parlays: poll /scores via proxy and settle completed events.
+  useEffect(() => {
+    const uid = localStorage.getItem('uid');
+    if (!uid) return;
+
+    void settlePendingApiOddsBetsForUser(uid);
+    void settleActiveGameChallengesGlobal();
+    const id = window.setInterval(() => {
+      const u = localStorage.getItem('uid');
+      if (u) void settlePendingApiOddsBetsForUser(u);
+      void settleActiveGameChallengesGlobal();
+    }, 90_000);
+    return () => window.clearInterval(id);
+  }, [localStorage.getItem('userEmail')]);
+
   /**
    * Places a bet, optionally with a weekly boost applied.
    * The boost is saved onto the bet doc and marked used atomically in Firestore.
@@ -107,24 +124,36 @@ export function useBettingViewModel() {
       betType: 'single' | 'parlay' = 'single',
       activeBoost: BoostType | null = null,
       onBoostUsed?: () => void,
+      /** When set, place this queued pick as a single (removes it from the slip on success). */
+      singleTarget?: BetSelection | null,
   ) => {
     console.log('handlePlaceBet called, activeBoost:', activeBoost);
-    if (!betSelection || isPlacingBet) return;
+    if (isPlacingBet) return;
+
+    const isParlayBet = betType === 'parlay';
+    const singlePick = !isParlayBet ? (singleTarget ?? betSelection) : null;
+    if (!isParlayBet && !singlePick) return;
+    if (isParlayBet && !betSelection) return;
 
     // Defensive lock: mock markets are bettable only while UPCOMING.
     // If a mock game finalized after selection but before checkout, remove it.
     const isClosedMock = (m: Market) => m.sport_key === 'football_nfl_mock' && m.status === 'CLOSED';
-    if (isClosedMock(betSelection.market)) {
+    const mockAnchor = isParlayBet ? betSelection! : singlePick!;
+    if (isClosedMock(mockAnchor.market)) {
       setParlaySelections((prev) =>
-        prev.filter((sel) => `${sel.market.id}:${sel.option.id}` !== `${betSelection.market.id}:${betSelection.option.id}`)
+        prev.filter((sel) => `${sel.market.id}:${sel.option.id}` !== `${mockAnchor.market.id}:${mockAnchor.option.id}`)
       );
-      setBetSelection(null);
+      setBetSelection((cur) => {
+        if (!cur) return null;
+        if (`${cur.market.id}:${cur.option.id}` === `${mockAnchor.market.id}:${mockAnchor.option.id}`) return null;
+        return cur;
+      });
       return;
     }
     const staleParlayMockLegs = parlaySelections.filter((sel) => isClosedMock(sel.market));
     if (staleParlayMockLegs.length > 0) {
       setParlaySelections((prev) => prev.filter((sel) => !isClosedMock(sel.market)));
-      if (isClosedMock(betSelection.market)) setBetSelection(null);
+      if (betSelection && isClosedMock(betSelection.market)) setBetSelection(null);
       return;
     }
 
@@ -132,19 +161,18 @@ export function useBettingViewModel() {
     if (!uid) return;
     if (!Number.isFinite(stake) || stake <= 0 || stake > balance) return;
 
-    const isParlayBet = betType === 'parlay';
     const parlayCount = parlaySelections.length;
     if (isParlayBet && parlayCount < 2) return;
 
     const parlayOdds = parlaySelections.reduce((acc, s) => acc * s.option.odds, 1);
-    const resolvedOdds = isParlayBet ? parlayOdds : betSelection.option.odds;
+    const resolvedOdds = isParlayBet ? parlayOdds : singlePick!.option.odds;
     const resolvedMarketId = isParlayBet
         ? `parlay:${parlaySelections.map((s) => s.market.id).join('|')}`
-        : betSelection.market.id;
+        : singlePick!.market.id;
     const resolvedMarketTitle = isParlayBet
         ? parlaySelections.map((s) => s.market.title).join(' | ')
-        : betSelection.market.title;
-    const resolvedOptionLabel = isParlayBet ? `${parlayCount}-Leg Parlay` : betSelection.option.label;
+        : singlePick!.market.title;
+    const resolvedOptionLabel = isParlayBet ? `${parlayCount}-Leg Parlay` : singlePick!.option.label;
     const parlayLegs = isParlayBet
         ? parlaySelections.map((s) => ({
           marketId:    s.market.id,
@@ -160,12 +188,12 @@ export function useBettingViewModel() {
     // For singles, capture the underlying event so head-to-head proposals can
     // enforce a "no fades after kickoff" lock. Parlays don't expose a single
     // event, so leave these fields unset (H2H disallows parlays in v1).
-    const singleEventId       = isParlayBet ? undefined : betSelection.market.id;
-    const singleSportKey      = isParlayBet ? undefined : betSelection.market.sport_key;
+    const singleEventId       = isParlayBet ? undefined : singlePick!.market.id;
+    const singleSportKey      = isParlayBet ? undefined : singlePick!.market.sport_key;
     const singleEventStartsAt = isParlayBet
         ? undefined
         : (() => {
-            const raw = betSelection.market.startTime;
+            const raw = singlePick!.market.startTime;
             if (!raw) return undefined;
             const parsed = new Date(raw);
             return Number.isNaN(parsed.getTime()) ? undefined : parsed;
@@ -184,6 +212,7 @@ export function useBettingViewModel() {
       parlayLegs,
       eventId:         singleEventId,
       sportKey:        singleSportKey,
+      pickedMarketKey: isParlayBet ? undefined : singlePick!.option.marketKey ?? 'h2h',
       eventStartsAt:   singleEventStartsAt,
     };
 
@@ -201,14 +230,21 @@ export function useBettingViewModel() {
         // off `parlaySelections.length >= 2`; without this, the same parlay
         // legs sit in the slip post-placement and a second click would place
         // a duplicate bet.
-        setBetSelection(null);
         if (isParlayBet) {
+          setBetSelection(null);
           setParlaySelections([]);
           setParlayRuleError(null);
           if (parlayErrorTimerRef.current) {
             clearTimeout(parlayErrorTimerRef.current);
             parlayErrorTimerRef.current = null;
           }
+        } else {
+          const placedKey = `${singlePick!.market.id}:${singlePick!.option.id}`;
+          setParlaySelections((prev) => {
+            const next = prev.filter((s) => `${s.market.id}:${s.option.id}` !== placedKey);
+            setBetSelection(next[next.length - 1] ?? null);
+            return next;
+          });
         }
         // Clear the boost after successful placement
         onBoostUsed?.();
@@ -289,6 +325,13 @@ export function useBettingViewModel() {
     });
   }, [flashParlayError]);
 
+  const focusQueuedSelection = useCallback((market: Market, option: MarketOption) => {
+    const key = `${market.id}:${option.id}`;
+    const exists = parlaySelections.some((sel) => `${sel.market.id}:${sel.option.id}` === key);
+    if (!exists) return;
+    setBetSelection({ market, option });
+  }, [parlaySelections]);
+
   return {
     balance,
     activeBets,
@@ -301,5 +344,6 @@ export function useBettingViewModel() {
     handleDailyBonus,
     clearBetSelection,
     selectBet,
+    focusQueuedSelection,
   };
 }

@@ -73,6 +73,7 @@ const App: React.FC = () => {
         onPlaceBet={dashboard.betting.handlePlaceBet}
         onClearBet={dashboard.betting.clearBetSelection}
         onSelectBet={dashboard.betting.selectBet}
+        onFocusQueuedSelection={dashboard.betting.focusQueuedSelection}
         onDailyBonus={dashboard.betting.handleDailyBonus}
         onLogout={dashboard.auth.logout}
         onSetView={dashboard.setView}
@@ -81,7 +82,6 @@ const App: React.FC = () => {
         onLeagueFilter={dashboard.markets.setLeagueFilter}
         onSearchChange={dashboard.markets.setSearchQuery}
         onRetryMarkets={dashboard.markets.loadMarkets}
-        onChallenge={dashboard.handleChallenge}
         themeMode={dashboard.themeMode}
         themeSaving={dashboard.themeSaving}
         onThemeModeChange={dashboard.updateThemeMode}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, NavLink } from 'react-router-dom';
 import {
   Trophy,
@@ -35,16 +35,46 @@ import { SiteFooter } from '../components/SiteFooter';
 import { ProfileView } from './ProfileView';
 import { HeadToHeadView } from './HeadToHeadView';
 import { StoreView } from './StoreView';
+import { CounterOpponentModal } from '../components/CounterOpponentModal';
+import { profileBackgroundForUid } from '@/models/profileBackgrounds';
 import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
-import { DAILY_BONUS_AMOUNT, MOCK_NFL_TEAM_POOL, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
-import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForChange, saveUserMockNflGames, settleUserMockNflGameBets } from "@/services/dbOps.ts";
-import type { MockNflGameState } from "@/services/dbOps.ts";
+import { DAILY_BONUS_AMOUNT, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
+import {
+  FriendRequest,
+  ensureGlobalMockNflBoardSeeded,
+  getBets,
+  getUserMoney,
+  getUserProfileSummary,
+  listenForChange,
+  makeDmThreadId,
+  saveGlobalMockNflGames,
+  sendDirectMessage,
+  settleAllUsersForMockNflGame,
+  subscribeToGlobalMockNflGames,
+} from "@/services/dbOps.ts";
+import type { MockNflGameState } from '@/models';
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
+import { buildMockNflMarketFromGameState } from '@/lib/mockNflMarketFromState';
+import { reconcileMockGameChallengesAfterGlobalMockFinal } from '@/services/gameChallenges';
 import { computeParlayRollup } from '@/services/parlayRollup';
-import { WinCelebrationModal } from '../components/WinCelebrationModal';
+import { formatAmericanOddsLine } from '@/lib/oddsAmericanFormat';
+import { createRandomMockNflGameState } from '@/lib/globalMockNflBoard';
+import {
+  WinCelebrationModal,
+  type WinCelebrationPayload,
+} from '../components/WinCelebrationModal';
+import { collection, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
+import { db } from '@/models/constants.ts';
+import { UserAvatar } from '../components/UserAvatar';
+import {
+  compileHistoryBetPeers,
+  type HeadToHeadDocRow,
+  type GameChallengeDocRow,
+  type HistoryBetPeerInfo,
+} from '@/lib/historyBetPeerMap';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
 
@@ -109,9 +139,16 @@ interface DashboardViewProps {
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
-  onPlaceBet: (stake: number, betType?: 'single' | 'parlay', boost?: BoostType | null, onBoostUsed?: () => void) => void;
+  onPlaceBet: (
+    stake: number,
+    betType?: 'single' | 'parlay',
+    boost?: BoostType | null,
+    onBoostUsed?: () => void,
+    singleTarget?: { market: Market; option: MarketOption } | null,
+  ) => void;
   onClearBet: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
+  onFocusQueuedSelection: (market: Market, option: MarketOption) => void;
   onDailyBonus: () => void;
   onLogout: () => void;
   onSetView: (view: string) => void;
@@ -120,10 +157,165 @@ interface DashboardViewProps {
   onLeagueFilter: (league: string) => void;
   onSearchChange: (query: string) => void;
   onRetryMarkets: () => void;
-  onChallenge: (friend: Friend) => void;
   themeMode: UserThemeMode;
   themeSaving: boolean;
   onThemeModeChange: (mode: UserThemeMode) => void;
+}
+
+const H2H_COL = 'headToHead';
+const GC_COL = 'gameChallenges';
+
+type QueuedCelebration = { key: string; payload: WinCelebrationPayload };
+
+function readStringSetFromLs(storageKey: string): Set<string> {
+  if (typeof localStorage === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeStringSetToLs(storageKey: string, ids: Set<string>) {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(storageKey, JSON.stringify(Array.from(ids)));
+}
+
+function userWonH2h(
+  data: { status?: unknown; originalUserId?: unknown; challengerUserId?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  return (status === 'WON_BY_ORIGINAL' && uid === orig) || (status === 'WON_BY_CHALLENGER' && uid === chall);
+}
+
+function userLostH2h(
+  data: { status?: unknown; originalUserId?: unknown; challengerUserId?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  return (status === 'WON_BY_ORIGINAL' && uid === chall) || (status === 'WON_BY_CHALLENGER' && uid === orig);
+}
+
+function userPushH2h(data: { status?: unknown }, _uid: string): boolean {
+  return String(data.status ?? '') === 'PUSH';
+}
+
+function h2hYourSideLabel(data: Record<string, unknown>, uid: string): string {
+  const orig = String(data.originalUserId ?? '');
+  if (uid === orig) return String(data.originalSide ?? 'Your pick');
+  return `Fade (${String(data.originalSide ?? '')})`;
+}
+
+function h2hDocToWinPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  const opponent = uid === orig ? chall : orig;
+  return {
+    kind: 'h2h_win',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+    pickLabel: String(data.originalSide ?? ''),
+    totalEscrow: (Number(data.originalStake) || 0) + (Number(data.challengerStake) || 0),
+    originalBetId: String(data.originalBetId ?? ''),
+  };
+}
+
+function h2hDocToLossPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  const opponent = uid === orig ? chall : orig;
+  return {
+    kind: 'h2h_loss',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+    yourSideLabel: h2hYourSideLabel(data, uid),
+  };
+}
+
+function h2hDocToPushPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  const opponent = uid === orig ? chall : orig;
+  return {
+    kind: 'h2h_push',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+  };
+}
+
+function userWonGc(
+  data: { status?: unknown; challengerUid?: unknown; opponentUid?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  return (status === 'COMPLETED_CHALLENGER' && uid === chall) || (status === 'COMPLETED_OPPONENT' && uid === opp);
+}
+
+function userLostGc(
+  data: { status?: unknown; challengerUid?: unknown; opponentUid?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  return (status === 'COMPLETED_CHALLENGER' && uid === opp) || (status === 'COMPLETED_OPPONENT' && uid === chall);
+}
+
+function userPushGc(data: { status?: unknown }, _uid: string): boolean {
+  return String(data.status ?? '') === 'PUSH';
+}
+
+function gcDocToWinPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  if (String(data.status ?? '') === 'COMPLETED_CHALLENGER' && uid === chall) {
+    return {
+      kind: 'gc_win',
+      opponentUid: opp,
+      marketTitle: String(data.marketTitle ?? ''),
+      yourPick: String(data.challengerPickLabel ?? ''),
+    };
+  }
+  return {
+    kind: 'gc_win',
+    opponentUid: chall,
+    marketTitle: String(data.marketTitle ?? ''),
+    yourPick: String(data.opponentPickLabel ?? ''),
+  };
+}
+
+function gcDocToLossPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  const opponent = uid === chall ? opp : chall;
+  const yourPick =
+    uid === chall ? String(data.challengerPickLabel ?? '') : String(data.opponentPickLabel ?? '');
+  return {
+    kind: 'gc_loss',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+    yourPick,
+  };
+}
+
+function gcDocToPushPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  const opponent = uid === chall ? opp : chall;
+  return {
+    kind: 'gc_push',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+  };
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
@@ -156,6 +348,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onPlaceBet,
     onClearBet,
     onSelectBet,
+    onFocusQueuedSelection,
     onDailyBonus,
     onLogout,
     onSetView,
@@ -164,7 +357,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onLeagueFilter,
     onSearchChange,
     onRetryMarkets,
-    onChallenge,
     themeMode,
     themeSaving,
     onThemeModeChange,
@@ -176,89 +368,75 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const isLightMode = themeMode === 'light';
   const [promotionsOpen, setPromotionsOpen] = useState(false);
   const [mockNflGames, setMockNflGames] = useState<MockNflGameState[]>([]);
+  const mockNflChallengeMarkets = useMemo(
+    () => mockNflGames.map((g) => buildMockNflMarketFromGameState(g)),
+    [mockNflGames],
+  );
   const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
-  const [pendingWinBets, setPendingWinBets] = useState<Bet[]>([]);
-  const [activeWinBet, setActiveWinBet] = useState<Bet | null>(null);
+  const [celebrationQueue, setCelebrationQueue] = useState<QueuedCelebration[]>([]);
+  const [activeCelebration, setActiveCelebration] = useState<QueuedCelebration | null>(null);
+  const [challengeFriendTarget, setChallengeFriendTarget] = useState<Friend | null>(null);
+  const [h2hNavAttention, setH2hNavAttention] = useState(false);
+  const h2hPendingOrigRef = useRef(false);
+  const gcPendingOppRef = useRef(false);
   const seenWinningBetIds = useRef<Set<string>>(new Set());
   const hasInitializedWinTracking = useRef(false);
+  const seenPeerOutcomeModalIds = useRef<Set<string>>(new Set());
+  const h2hBootstrapDone = useRef(false);
+  const lastH2hOrigSnap = useRef<QuerySnapshot | null>(null);
+  const lastH2hChallSnap = useRef<QuerySnapshot | null>(null);
+  const gcBootstrapDone = useRef(false);
+  const lastGcChallSnap = useRef<QuerySnapshot | null>(null);
+  const lastGcOppSnap = useRef<QuerySnapshot | null>(null);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
   const seenWinningBetsStorageKey = userUid ? `bethub_seen_winning_bets:${userUid}` : '';
+  const peerOutcomeModalStorageKey = userUid ? `bethub_seen_peer_outcome_modal:${userUid}` : '';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
     document.documentElement.dataset.theme = isLightMode ? 'light' : 'ocean';
   }, [isLightMode]);
 
-  const normalizeSpreadLine = (line: number) => (line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1));
-  const pickRandom = <T,>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
-  const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
-  const decimalOdds = () => Number(randomBetween(1.72, 2.25).toFixed(2));
-  const randomWeek = () => Math.floor(randomBetween(1, 19));
-
-  const makeMockGame = (idPrefix: string, previous?: MockNflGameState): MockNflGameState => {
-    const teamPool = MOCK_NFL_TEAM_POOL;
-    const shouldFlip = Boolean(previous) && Math.random() < 0.5;
-    const awayTeam = shouldFlip && previous ? previous.homeTeam : pickRandom(teamPool);
-    let homeTeam = shouldFlip && previous ? previous.awayTeam : pickRandom(teamPool);
-    let guard = 0;
-    while (homeTeam === awayTeam && guard < 10) {
-      homeTeam = pickRandom(teamPool);
-      guard += 1;
-    }
-
-    const spreadMag = Number(randomBetween(1.5, 7.5).toFixed(1));
-    const awayFavored = Math.random() < 0.5;
-    const spreadLine = awayFavored ? -spreadMag : spreadMag;
-    return {
-      id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      week: randomWeek(),
-      awayTeam,
-      homeTeam,
-      awayOdds: decimalOdds(),
-      homeOdds: decimalOdds(),
-      totalOverOdds: decimalOdds(),
-      totalUnderOdds: decimalOdds(),
-      spreadLine,
-      totalLine: Number(randomBetween(39.5, 53.5).toFixed(1)),
-      status: 'UPCOMING',
-      awayScore: null,
-      homeScore: null,
-      winner: null,
-      updatedAtMs: Date.now(),
-    };
-  };
-
-  const ensureMockBoard = (existing: MockNflGameState[]): MockNflGameState[] => {
-    const upcoming = existing.filter((g) => g.status !== 'FINAL');
-    const seeded = [...upcoming];
-    while (seeded.length < 3) {
-      seeded.push(makeMockGame('mock-nfl', seeded[seeded.length - 1]));
-    }
-    return seeded.slice(0, 3);
-  };
-
   useEffect(() => {
-    if (!userUid) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const stored = await getUserMockNflGames(userUid);
-        if (cancelled) return;
-        const board = ensureMockBoard(stored);
-        setMockNflGames(board);
-        await saveUserMockNflGames(userUid, board);
-      } catch (err) {
-        console.error('Failed to load mock NFL games', err);
-        if (cancelled) return;
-        const board = ensureMockBoard([]);
-        setMockNflGames(board);
-      }
-    })();
+    if (!userUid) {
+      h2hPendingOrigRef.current = false;
+      gcPendingOppRef.current = false;
+      setH2hNavAttention(false);
+      return;
+    }
+    const sync = () => setH2hNavAttention(h2hPendingOrigRef.current || gcPendingOppRef.current);
+    const qH = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
+    const qGc = query(collection(db, GC_COL), where('opponentUid', '==', userUid));
+    const u1 = onSnapshot(qH, (snap) => {
+      h2hPendingOrigRef.current = snap.docs.some(
+        (d) => String((d.data() as Record<string, unknown>).status ?? '') === 'PENDING_ACCEPT',
+      );
+      sync();
+    });
+    const u2 = onSnapshot(qGc, (snap) => {
+      gcPendingOppRef.current = snap.docs.some(
+        (d) => String((d.data() as Record<string, unknown>).status ?? '') === 'PENDING_ACCEPT',
+      );
+      sync();
+    });
     return () => {
-      cancelled = true;
+      u1();
+      u2();
     };
   }, [userUid]);
+
+  const normalizeSpreadLine = (line: number) => (line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1));
+  const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
+
+  useEffect(() => {
+    const unsub = subscribeToGlobalMockNflGames(
+      (games) => setMockNflGames(games),
+      (err) => console.error('Global mock NFL subscription failed', err),
+    );
+    void ensureGlobalMockNflBoardSeeded().catch((e) => console.error('ensureGlobalMockNflBoardSeeded', e));
+    return () => unsub();
+  }, []);
 
   const simulateMockGame = async (gameId: string, mode: 'RANDOM' | 'AWAY' | 'HOME') => {
     let finalizedGame: MockNflGameState | null = null;
@@ -288,23 +466,20 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       return finalized;
     });
     setMockNflGames(next);
-    if (userUid) {
-      await saveUserMockNflGames(userUid, next);
-      if (finalizedGame) {
-        await settleUserMockNflGameBets(userUid, finalizedGame);
-      }
+    await saveGlobalMockNflGames(next);
+    if (finalizedGame) {
+      await settleAllUsersForMockNflGame(finalizedGame);
+      await reconcileMockGameChallengesAfterGlobalMockFinal(finalizedGame);
     }
   };
 
   const createNewMockGame = async (gameId: string) => {
     const next = mockNflGames.map((g) => {
       if (g.id !== gameId) return g;
-      return makeMockGame('mock-nfl', g);
+      return createRandomMockNflGameState('mock-nfl', g);
     });
     setMockNflGames(next);
-    if (userUid) {
-      await saveUserMockNflGames(userUid, next);
-    }
+    await saveGlobalMockNflGames(next);
   };
 
   useEffect(() => {
@@ -349,6 +524,15 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const [historyYear, setHistoryYear] = useState<number | 'all'>('all');
   const [historyMinStake, setHistoryMinStake] = useState<number>(0);
   const [historyMaxStake, setHistoryMaxStake] = useState<number | null>(null);
+  /** When true, history lists only tickets linked to a counter-bet or game challenge. */
+  const [historyPeersOnly, setHistoryPeersOnly] = useState(false);
+  const [historyBetPeers, setHistoryBetPeers] = useState<Record<string, HistoryBetPeerInfo>>({});
+  const [historyPeerProfiles, setHistoryPeerProfiles] = useState<Record<string, Friend>>({});
+  const h2hOrigRowsRef = useRef<HeadToHeadDocRow[]>([]);
+  const h2hChallRowsRef = useRef<HeadToHeadDocRow[]>([]);
+  const gcChallRowsRef = useRef<GameChallengeDocRow[]>([]);
+  const gcOppRowsRef = useRef<GameChallengeDocRow[]>([]);
+  const activeBetsForHistoryRef = useRef<Bet[]>(props.activeBets);
 
   // Distinct years the user has bet in. Always derived from the realtime
   // activeBets list so newly-placed bets in fresh years show up automatically.
@@ -373,6 +557,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
         const s = (b.status ?? 'PENDING').toLowerCase();
         if (!historyStatusSet.has(s)) return false;
       }
+      if (historyPeersOnly && !historyBetPeers[b.id]) return false;
       if (historyYear !== 'all' && b.placedAt.getFullYear() !== historyYear) return false;
       if (b.stake < historyMinStake) return false;
       if (historyMaxStake !== null && b.stake > historyMaxStake) return false;
@@ -385,7 +570,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       case 'recent':
       default:            return list.sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime());
     }
-  }, [props.activeBets, historyStatusSet, historyYear, historyMinStake, historyMaxStake, historySort]);
+  }, [
+    props.activeBets,
+    historyStatusSet,
+    historyYear,
+    historyMinStake,
+    historyMaxStake,
+    historySort,
+    historyPeersOnly,
+    historyBetPeers,
+  ]);
 
   const toggleHistoryStatus = (status: string) =>
     setHistoryStatusSet((prev) => {
@@ -401,6 +595,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     setHistoryYear('all');
     setHistoryMinStake(0);
     setHistoryMaxStake(null);
+    setHistoryPeersOnly(false);
   };
 
   const hasActiveHistoryFilters =
@@ -408,11 +603,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     historyYear !== 'all' ||
     historyMinStake > 0 ||
     historyMaxStake !== null ||
-    historySort !== 'recent';
+    historySort !== 'recent' ||
+    historyPeersOnly;
 
-  const handlePlaceBetWithBoost = (stake: number, betType?: 'single' | 'parlay') => {
+  const handlePlaceBetWithBoost = (
+    stake: number,
+    betType?: 'single' | 'parlay',
+    singleTarget?: { market: Market; option: MarketOption } | null,
+  ) => {
     console.log('handlePlaceBetWithBoost called, activeBoost:', activeBoost);
-    onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null));
+    onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null), singleTarget);
   };
 
   useEffect(() => {
@@ -424,9 +624,23 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   useEffect(() => {
     seenWinningBetIds.current = new Set();
     hasInitializedWinTracking.current = false;
-    setPendingWinBets([]);
-    setActiveWinBet(null);
-  }, [userUid]);
+    if (peerOutcomeModalStorageKey && userUid) {
+      const merged = readStringSetFromLs(peerOutcomeModalStorageKey);
+      readStringSetFromLs(`bethub_seen_h2h_win_celebration:${userUid}`).forEach((k) => merged.add(k));
+      readStringSetFromLs(`bethub_seen_gc_win_celebration:${userUid}`).forEach((k) => merged.add(k));
+      seenPeerOutcomeModalIds.current = merged;
+    } else {
+      seenPeerOutcomeModalIds.current = new Set();
+    }
+    h2hBootstrapDone.current = false;
+    gcBootstrapDone.current = false;
+    lastH2hOrigSnap.current = null;
+    lastH2hChallSnap.current = null;
+    lastGcChallSnap.current = null;
+    lastGcOppSnap.current = null;
+    setCelebrationQueue([]);
+    setActiveCelebration(null);
+  }, [userUid, peerOutcomeModalStorageKey]);
 
   useEffect(() => {
     if (!userUid) return;
@@ -463,15 +677,244 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
 
     unseen.forEach((bet) => seenWinningBetIds.current.add(bet.id));
     writeStoredSeenIds(seenWinningBetIds.current);
-    setPendingWinBets((prev) => [...prev, ...unseen]);
+    setCelebrationQueue((prev) => {
+      const keys = new Set(prev.map((q) => q.key));
+      const additions: QueuedCelebration[] = unseen
+        .filter((bet) => !keys.has(`bet:${bet.id}`))
+        .map((bet) => ({ key: `bet:${bet.id}`, payload: { kind: 'bet', bet } as const }));
+      return [...prev, ...additions];
+    });
   }, [props.activeBets, seenWinningBetsStorageKey, userUid]);
 
   useEffect(() => {
-    if (activeWinBet || pendingWinBets.length === 0) return;
-    const [next, ...rest] = pendingWinBets;
-    setActiveWinBet(next);
-    setPendingWinBets(rest);
-  }, [activeWinBet, pendingWinBets]);
+    if (activeCelebration || celebrationQueue.length === 0) return;
+    const [next, ...rest] = celebrationQueue;
+    setActiveCelebration(next);
+    setCelebrationQueue(rest);
+  }, [activeCelebration, celebrationQueue]);
+
+  useEffect(() => {
+    if (!userUid || !peerOutcomeModalStorageKey) return;
+
+    const persistPeerOutcomesSeen = () =>
+      writeStringSetToLs(peerOutcomeModalStorageKey, seenPeerOutcomeModalIds.current);
+
+    const tryBootstrapH2h = () => {
+      if (h2hBootstrapDone.current) return;
+      if (!lastH2hOrigSnap.current || !lastH2hChallSnap.current) return;
+      h2hBootstrapDone.current = true;
+      const merged = new Map([...lastH2hOrigSnap.current.docs, ...lastH2hChallSnap.current.docs].map((d) => [d.id, d]));
+      merged.forEach((d) => {
+        const data = d.data() as Record<string, unknown>;
+        if (userWonH2h(data, userUid)) seenPeerOutcomeModalIds.current.add(`h2h_win:${d.id}`);
+        if (userLostH2h(data, userUid)) seenPeerOutcomeModalIds.current.add(`h2h_loss:${d.id}`);
+        if (userPushH2h(data, userUid)) seenPeerOutcomeModalIds.current.add(`h2h_push:${d.id}`);
+      });
+      persistPeerOutcomesSeen();
+    };
+
+    const queueIfNew = (dedupe: string, payload: WinCelebrationPayload) => {
+      if (seenPeerOutcomeModalIds.current.has(dedupe)) return;
+      seenPeerOutcomeModalIds.current.add(dedupe);
+      persistPeerOutcomesSeen();
+      setCelebrationQueue((prev) => (prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }]));
+    };
+
+    const processH2hDoc = (docSnap: { id: string; data: () => Record<string, unknown> }) => {
+      const data = docSnap.data();
+      if (userWonH2h(data, userUid)) queueIfNew(`h2h_win:${docSnap.id}`, h2hDocToWinPayload(data, userUid));
+      if (userLostH2h(data, userUid)) queueIfNew(`h2h_loss:${docSnap.id}`, h2hDocToLossPayload(data, userUid));
+      if (userPushH2h(data, userUid)) queueIfNew(`h2h_push:${docSnap.id}`, h2hDocToPushPayload(data, userUid));
+    };
+
+    const qOrig = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
+    const qChall = query(collection(db, H2H_COL), where('challengerUserId', '==', userUid));
+
+    const unsubOrig = onSnapshot(qOrig, (snap) => {
+      lastH2hOrigSnap.current = snap;
+      tryBootstrapH2h();
+      if (!h2hBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        processH2hDoc(ch.doc);
+      });
+    });
+
+    const unsubChall = onSnapshot(qChall, (snap) => {
+      lastH2hChallSnap.current = snap;
+      tryBootstrapH2h();
+      if (!h2hBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        processH2hDoc(ch.doc);
+      });
+    });
+
+    return () => {
+      unsubOrig();
+      unsubChall();
+    };
+  }, [userUid, peerOutcomeModalStorageKey]);
+
+  useEffect(() => {
+    if (!userUid || !peerOutcomeModalStorageKey) return;
+
+    const persistPeerOutcomesSeen = () =>
+      writeStringSetToLs(peerOutcomeModalStorageKey, seenPeerOutcomeModalIds.current);
+
+    const tryBootstrapGc = () => {
+      if (gcBootstrapDone.current) return;
+      if (!lastGcChallSnap.current || !lastGcOppSnap.current) return;
+      gcBootstrapDone.current = true;
+      const merged = new Map([...lastGcChallSnap.current.docs, ...lastGcOppSnap.current.docs].map((d) => [d.id, d]));
+      merged.forEach((d) => {
+        const data = d.data() as Record<string, unknown>;
+        if (userWonGc(data, userUid)) seenPeerOutcomeModalIds.current.add(`gc_win:${d.id}`);
+        if (userLostGc(data, userUid)) seenPeerOutcomeModalIds.current.add(`gc_loss:${d.id}`);
+        if (userPushGc(data, userUid)) seenPeerOutcomeModalIds.current.add(`gc_push:${d.id}`);
+      });
+      persistPeerOutcomesSeen();
+    };
+
+    const queueIfNew = (dedupe: string, payload: WinCelebrationPayload) => {
+      if (seenPeerOutcomeModalIds.current.has(dedupe)) return;
+      seenPeerOutcomeModalIds.current.add(dedupe);
+      persistPeerOutcomesSeen();
+      setCelebrationQueue((prev) => (prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }]));
+    };
+
+    const processGcDoc = (docSnap: { id: string; data: () => Record<string, unknown> }) => {
+      const data = docSnap.data();
+      if (userWonGc(data, userUid)) queueIfNew(`gc_win:${docSnap.id}`, gcDocToWinPayload(data, userUid));
+      if (userLostGc(data, userUid)) queueIfNew(`gc_loss:${docSnap.id}`, gcDocToLossPayload(data, userUid));
+      if (userPushGc(data, userUid)) queueIfNew(`gc_push:${docSnap.id}`, gcDocToPushPayload(data, userUid));
+    };
+
+    const qChall = query(collection(db, GC_COL), where('challengerUid', '==', userUid));
+    const qOpp = query(collection(db, GC_COL), where('opponentUid', '==', userUid));
+
+    const unsubChall = onSnapshot(qChall, (snap) => {
+      lastGcChallSnap.current = snap;
+      tryBootstrapGc();
+      if (!gcBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        processGcDoc(ch.doc);
+      });
+    });
+
+    const unsubOpp = onSnapshot(qOpp, (snap) => {
+      lastGcOppSnap.current = snap;
+      tryBootstrapGc();
+      if (!gcBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        processGcDoc(ch.doc);
+      });
+    });
+
+    return () => {
+      unsubChall();
+      unsubOpp();
+    };
+  }, [userUid, peerOutcomeModalStorageKey]);
+
+  const handleCloseCelebration = async (opts?: { banter?: string }) => {
+    const cur = activeCelebration;
+    setActiveCelebration(null);
+    const banter = opts?.banter?.trim();
+    if (!cur || !banter || !userUid) return;
+    if (cur.payload.kind !== 'h2h_win' && cur.payload.kind !== 'gc_win') return;
+    const threadId = makeDmThreadId(userUid, cur.payload.opponentUid);
+    await sendDirectMessage({
+      threadId,
+      messageId: `celebration_banter_${Date.now()}`,
+      fromUserId: userUid,
+      toUserId: cur.payload.opponentUid,
+      text: banter,
+      createdAtMs: Date.now(),
+    });
+  };
+
+  const rebuildHistoryBetPeers = useCallback(() => {
+    const uid = userUid;
+    if (!uid) return;
+    const dedupeH2h = new Map<string, HeadToHeadDocRow>();
+    [...h2hOrigRowsRef.current, ...h2hChallRowsRef.current].forEach((r) => dedupeH2h.set(r.id, r));
+    const dedupeGc = new Map<string, GameChallengeDocRow>();
+    [...gcChallRowsRef.current, ...gcOppRowsRef.current].forEach((r) => dedupeGc.set(r.id, r));
+    setHistoryBetPeers(
+      compileHistoryBetPeers(uid, [...dedupeH2h.values()], [...dedupeGc.values()], activeBetsForHistoryRef.current),
+    );
+  }, [userUid]);
+
+  useEffect(() => {
+    activeBetsForHistoryRef.current = props.activeBets;
+    rebuildHistoryBetPeers();
+  }, [props.activeBets, rebuildHistoryBetPeers]);
+
+  const historyPeerLoadedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    historyPeerLoadedRef.current = new Set();
+    setHistoryPeerProfiles({});
+    if (!userUid) {
+      h2hOrigRowsRef.current = [];
+      h2hChallRowsRef.current = [];
+      gcChallRowsRef.current = [];
+      gcOppRowsRef.current = [];
+      setHistoryBetPeers({});
+      return;
+    }
+
+    const mapSnap = (snap: QuerySnapshot) =>
+      snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+
+    const qHOrig = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
+    const qHChall = query(collection(db, H2H_COL), where('challengerUserId', '==', userUid));
+    const qGcChall = query(collection(db, GC_COL), where('challengerUid', '==', userUid));
+    const qGcOpp = query(collection(db, GC_COL), where('opponentUid', '==', userUid));
+
+    const u1 = onSnapshot(qHOrig, (snap) => {
+      h2hOrigRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+    const u2 = onSnapshot(qHChall, (snap) => {
+      h2hChallRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+    const u3 = onSnapshot(qGcChall, (snap) => {
+      gcChallRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+    const u4 = onSnapshot(qGcOpp, (snap) => {
+      gcOppRowsRef.current = mapSnap(snap);
+      rebuildHistoryBetPeers();
+    });
+
+    return () => {
+      u1();
+      u2();
+      u3();
+      u4();
+    };
+  }, [userUid, rebuildHistoryBetPeers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const p of Object.values(historyBetPeers)) {
+      const oid = p.opponentUid;
+      if (!oid || historyPeerLoadedRef.current.has(oid)) continue;
+      historyPeerLoadedRef.current.add(oid);
+      void getUserProfileSummary(oid).then((f) => {
+        if (cancelled || !f) return;
+        setHistoryPeerProfiles((prev) => ({ ...prev, [oid]: f }));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [historyBetPeers]);
 
 
   // ── Grab uid once for sidebar cards ────────────────────────────
@@ -496,25 +939,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     }
     return { label: time, tone: 'upcoming' as const };
   };
-
-  const mockMarketForGame = (game: MockNflGameState): Market => ({
-    id: `mock-${game.id}`,
-    sport_key: 'football_nfl_mock',
-    title: `${game.awayTeam} @ ${game.homeTeam}`,
-    subtitle: 'NFL',
-    category: 'Football',
-    type: MarketType.SPORTS,
-    startTime: new Date(game.updatedAtMs).toISOString(),
-    status: game.status === 'FINAL' ? 'CLOSED' : 'UPCOMING',
-    options: [
-      { id: `${game.id}-spread-away`, label: `${game.awayTeam} ${normalizeSpreadLine(game.spreadLine)}`, odds: game.awayOdds, marketKey: 'spreads' },
-      { id: `${game.id}-spread-home`, label: `${game.homeTeam} ${normalizeSpreadLine(-game.spreadLine)}`, odds: game.homeOdds, marketKey: 'spreads' },
-      { id: `${game.id}-total-over`, label: `Over ${game.totalLine.toFixed(1)}`, odds: game.totalOverOdds, marketKey: 'totals' },
-      { id: `${game.id}-total-under`, label: `Under ${game.totalLine.toFixed(1)}`, odds: game.totalUnderOdds, marketKey: 'totals' },
-      { id: `${game.id}-ml-away`, label: game.awayTeam, odds: game.awayOdds, marketKey: 'h2h' },
-      { id: `${game.id}-ml-home`, label: game.homeTeam, odds: game.homeOdds, marketKey: 'h2h' },
-    ],
-  });
 
   const isMockOptionSelected = (gameId: string, optionId: string) =>
     parlaySelections.some((sel) => sel.market.id === `mock-${gameId}` && sel.option.id === optionId);
@@ -687,7 +1111,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           <SocialMessagingView
             friends={friends}
             activities={activity}
-            onChallenge={onChallenge}
+            onChallenge={(f) => setChallengeFriendTarget(f)}
             bets={betList}
             userPrivacy={userPrivacy}
             friendRequests={friendReqs}
@@ -703,6 +1127,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             balance={balance}
             activeBetsCount={props.activeBets.length}
             currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
+            currentUserDisplayName={userName}
+            markets={markets}
+            nflMockChallengeMarkets={mockNflChallengeMarkets}
             themeMode={themeMode}
             themeSaving={themeSaving}
             onThemeModeChange={onThemeModeChange}
@@ -775,6 +1202,19 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                       <StatusChip value="void"      label="Void"      tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
                       <StatusChip value="cancelled" label="Cancelled" tone="bg-slate-500/20 text-slate-200 border-slate-500/40" />
                       <StatusChip value="pending"   label="Pending"   tone="bg-blue-500/15 text-blue-300 border-blue-500/40" />
+                      <button
+                        type="button"
+                        onClick={() => setHistoryPeersOnly((v) => !v)}
+                        className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border transition-colors inline-flex items-center gap-1.5 ${
+                          historyPeersOnly
+                            ? 'bg-violet-500/20 text-violet-200 border-violet-500/45'
+                            : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+                        }`}
+                        title="Show only tickets linked to a counter-bet or NFL sim game challenge"
+                      >
+                        <Swords size={12} className="opacity-90" aria-hidden />
+                        Counters & challenges
+                      </button>
                     </div>
 
                     <div className="hidden lg:block h-7 w-px bg-slate-700/70" aria-hidden />
@@ -922,6 +1362,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         s === 'push'                         ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-amber-300' } :
                         (s === 'void' || s === 'cancelled')  ? { label: 'Refund',           value: `$${bet.stake.toLocaleString()}`,         color: 'text-slate-300' } :
                                                                { label: 'Potential Payout', value: `$${bet.potentialPayout.toLocaleString()}`, color: 'text-blue-400' };
+                      const peer = historyBetPeers[bet.id];
+                      const peerFriend = peer ? historyPeerProfiles[peer.opponentUid] : undefined;
                       return (
                         <div key={bet.id} className={`glass-card rounded-2xl p-6 border-slate-800 hover:border-slate-700 transition-all ${rowAccent}`}>
                           <div className="flex justify-between items-start mb-4">
@@ -934,6 +1376,49 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               {pillLabel}
                             </span>
                           </div>
+                          {peer ? (
+                            <div className="mb-4">
+                              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                {peer.kind === 'counter' ? 'Counter-bet vs' : 'Game challenge vs'}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/profile/${peer.opponentUid}`)}
+                                className="group relative w-full max-w-md overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/50 text-left transition-colors hover:border-violet-500/40"
+                              >
+                                {peerFriend?.profileBackgroundUrl ? (
+                                  <div
+                                    className="absolute inset-0 bg-cover bg-center opacity-50 transition-opacity group-hover:opacity-60"
+                                    style={{ backgroundImage: `url("${peerFriend.profileBackgroundUrl}")` }}
+                                    aria-hidden
+                                  />
+                                ) : null}
+                                <div className="absolute inset-0 bg-gradient-to-r from-slate-950/92 via-slate-950/80 to-slate-950/55" aria-hidden />
+                                <div className="relative flex items-center gap-3 px-3 py-2.5">
+                                  <UserAvatar
+                                    initials={peerFriend?.avatar ?? '??'}
+                                    imageUrl={peerFriend?.avatarUrl}
+                                    alt={`${peerFriend?.name ?? 'Opponent'} avatar`}
+                                    className="h-11 w-11 shrink-0 rounded-xl ring-2 ring-slate-700/80 group-hover:ring-violet-500/40"
+                                    textClassName="text-xs text-violet-200"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-black text-slate-50 group-hover:text-white">
+                                      {peerFriend?.name ?? '…'}
+                                    </p>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 group-hover:text-slate-300">
+                                      View profile
+                                    </p>
+                                  </div>
+                                  {peer.kind === 'counter' ? (
+                                    <Swords className="h-4 w-4 shrink-0 text-red-400/90 opacity-80 group-hover:opacity-100" aria-hidden />
+                                  ) : (
+                                    <Trophy className="h-4 w-4 shrink-0 text-amber-400/90 opacity-80 group-hover:opacity-100" aria-hidden />
+                                  )}
+                                </div>
+                              </button>
+                            </div>
+                          ) : null}
                           <div className="flex justify-between items-end border-t border-slate-800 pt-4">
                             <div className="grid grid-cols-2 gap-8">
                               <div>
@@ -1000,7 +1485,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             title={tab}
                             className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
                                 sportPrimarySelected
-                                    ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                    ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 text-[#7dd3fc]'
                                     : sportMutedSelected
                                       ? 'border-slate-600 bg-slate-800/70 text-slate-300 ring-1 ring-slate-700/80'
                                       : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
@@ -1017,7 +1502,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         aria-pressed={sportFilter === 'ALL'}
                         className={`market-top-pill rounded-lg border p-2 flex items-center justify-center transition-all ${
                             sportFilter === 'ALL'
-                                ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 text-[#7dd3fc]'
                                 : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                         }`}
                     >
@@ -1115,7 +1600,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           value={searchQuery}
                           onChange={(e) => onSearchChange(e.target.value)}
                           disabled={!hasSelectedSport}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-[#3FA9F5] transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                       />
                     </div>
                   </div>
@@ -1142,7 +1627,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       }}
                                       className={`shrink-0 inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition-all ${
                                           sportFilter === tab
-                                              ? 'border-violet-400/80 bg-violet-500/20 text-violet-200'
+                                              ? 'border-[#3FA9F5]/80 bg-[#3FA9F5]/15 text-[#7dd3fc]'
                                               : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                                       }`}
                                   >
@@ -1156,7 +1641,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         {markets.length >= VIEW_ALL_GAMES_VISIBLE_THRESHOLD && (
                           <button
                             type="button"
-                            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-blue-300 transition-colors"
+                            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-[#7dd3fc] transition-colors"
                           >
                             View All Games <ChevronRight size={14} />
                           </button>
@@ -1186,7 +1671,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         <button
                             onClick={onRetryMarkets}
                             disabled={!hasSelectedSport}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-[#3FA9F5] hover:bg-[#2e9ae8] text-slate-950 rounded-xl font-bold transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <RefreshCw size={18} /> Retry
                         </button>
@@ -1200,7 +1685,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                 <span className="inline-flex rounded-full border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-200">
                                   Mock NFL
                                 </span>
-                                <span className="text-xs text-slate-300">Simulate outcomes and place test bets</span>
+                                <span className="text-xs text-slate-300">Simulated NFL games.</span>
                               </div>
                             </div>
                             {footballApiLeagues.length > 0 && (
@@ -1224,7 +1709,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               {mockNflGames.map((game) => (
                                 <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
                                   {(() => {
-                                    const mockMarket = mockMarketForGame(game);
+                                    const mockMarket = buildMockNflMarketFromGameState(game);
                                     const spreadAway = mockMarket.options[0];
                                     const spreadHome = mockMarket.options[1];
                                     const totalOver = mockMarket.options[2];
@@ -1267,7 +1752,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       )}
                                     </div>
                                     <p className="mt-2 text-[11px] text-slate-400">
-                                      Odds {game.awayOdds.toFixed(2)} / {game.homeOdds.toFixed(2)}
+                                      ML {formatAmericanOddsLine(game.awayOdds)} / {formatAmericanOddsLine(game.homeOdds)}
                                     </p>
                                     <div className="mt-2 space-y-1">
                                       {game.status === 'FINAL' ? (
@@ -1333,12 +1818,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         onClick={() => onSelectBet(mockMarket, opt)}
                                         className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                           isMockOptionSelected(game.id, opt.id)
-                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                            ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                        <p className="text-lg leading-none font-semibold text-[#3FA9F5]">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1353,12 +1838,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         onClick={() => onSelectBet(mockMarket, opt)}
                                         className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                           isMockOptionSelected(game.id, opt.id)
-                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                            ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                        <p className="text-lg leading-none font-semibold text-[#3FA9F5]">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1373,12 +1858,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         onClick={() => onSelectBet(mockMarket, opt)}
                                         className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                           isMockOptionSelected(game.id, opt.id)
-                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                            ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{opt.odds.toFixed(2)}</p>
+                                        <p className="text-lg leading-none font-semibold text-[#3FA9F5]">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1453,13 +1938,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                                       onClick={() => onSelectBet(market, opt)}
                                                       className={`market-odds-btn w-full rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                                           isOptionSelected(market, opt)
-                                                              ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                                              : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                                              ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                                              : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                                       }`}
                                                   >
                                                     <p className="text-[10px] text-slate-400 truncate">{opt.label}</p>
-                                                    <p className={`text-sm font-semibold ${isOptionSelected(market, opt) ? 'text-violet-200' : 'text-blue-300'}`}>
-                                                      {opt.odds.toFixed(2)}
+                                                    <p className={`text-sm font-semibold ${isOptionSelected(market, opt) ? 'text-[#7dd3fc]' : 'text-[#3FA9F5]'}`}>
+                                                      {formatAmericanOddsLine(opt.odds)}
                                                     </p>
                                                   </button>
                                               ) : (
@@ -1530,9 +2015,23 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <Receipt size={24} />
             </NavLink>
-            <NavLink to="/head-to-head" title="Head-to-Head" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-red-500/10 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <Swords size={24} />
-            </NavLink>
+            <span className="relative inline-flex">
+              <NavLink
+                to="/head-to-head"
+                title="Head-to-Head"
+                className={({ isActive }) =>
+                  `p-3 rounded-xl transition-all ${isActive ? 'bg-red-500/10 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`
+                }
+              >
+                <Swords size={24} />
+              </NavLink>
+              {h2hNavAttention ? (
+                <span
+                  className="pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-slate-900"
+                  aria-label="Pending head-to-head or challenge to review"
+                />
+              ) : null}
+            </span>
             <NavLink to="/store" title="Store" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-violet-500/10 text-violet-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <ShoppingBag size={24} />
             </NavLink>
@@ -1608,28 +2107,48 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 onPlaceBet={handlePlaceBetWithBoost}
                 onClose={() => setIsBetSlipCollapsed(true)}
                 onSelectBet={onSelectBet}
+                onFocusSelection={onFocusQueuedSelection}
                 balance={balance}
                 activeBoost={activeBoost}
                 limitError={null}
                 parlayRuleError={parlayRuleError}
-                onViewAllHistory={() => navigate('/history')}
+                isLightMode={isLightMode}
+                onGoToHistory={() => {
+                  setIsBetSlipCollapsed(true);
+                  navigate('/history');
+                }}
             />
         )}
         {view === 'MARKETS' && isBetSlipCollapsed && (
           <button
             type="button"
             onClick={() => setIsBetSlipCollapsed(false)}
-            className="fixed top-4 right-4 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-violet-400/50 bg-[#171427] text-violet-200 shadow-lg transition-colors hover:bg-[#221b3d]"
+            className="fixed top-4 right-4 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#3FA9F5]/50 bg-[#171427] text-[#7dd3fc] shadow-lg transition-colors hover:bg-[#221b3d]"
             title="Open bet slip"
             aria-label="Open bet slip"
           >
             <Ticket size={18} />
           </button>
         )}
+        {challengeFriendTarget && (
+          <CounterOpponentModal
+            isOpen
+            onClose={() => setChallengeFriendTarget(null)}
+            opponentUserId={challengeFriendTarget.id}
+            opponentDisplayName={challengeFriendTarget.name}
+            opponentAvatarUrl={challengeFriendTarget.avatarUrl}
+            backgroundImageUrl={
+              challengeFriendTarget.profileBackgroundUrl
+                ?? profileBackgroundForUid(challengeFriendTarget.id, challengeFriendTarget.name)
+            }
+            currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
+            balance={balance}
+          />
+        )}
         <WinCelebrationModal
-          bet={activeWinBet}
-          open={Boolean(activeWinBet)}
-          onClose={() => setActiveWinBet(null)}
+          payload={activeCelebration?.payload ?? null}
+          open={Boolean(activeCelebration)}
+          onClose={handleCloseCelebration}
         />
       </div>
   );

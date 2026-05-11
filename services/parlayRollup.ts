@@ -27,7 +27,7 @@ export function computeParlayRollup(
     stake: number,
 ): ParlayRollup {
     const normalized = legs.map((l) => {
-        const raw = (l.result ?? 'PENDING') as string;
+        const raw = String(l.result ?? 'PENDING').trim().toUpperCase();
         const result = (raw === 'WON' || raw === 'LOST' || raw === 'PUSH' || raw === 'VOID')
             ? raw
             : 'PENDING';

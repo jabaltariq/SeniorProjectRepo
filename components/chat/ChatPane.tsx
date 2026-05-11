@@ -2,6 +2,22 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import type { Friend } from '../../models';
 import { Send, Trash2, X } from 'lucide-react';
 import { UserAvatar } from '../UserAvatar';
+import { GameChallengeDmCard } from '../GameChallengeDmCard';
+import { CounterBetDmCard } from '../CounterBetDmCard';
+import {
+  isGameChallengeMessageText,
+  isGcSettleMessageText,
+  parseGameChallengeIdFromMessage,
+  parseGcSettleChallengeIdFromMessage,
+} from '@/services/gameChallenges';
+import {
+  isCounterBetInviteMessageText,
+  isCounterBetSettlementMessageText,
+  parseCounterBetInviteIdFromMessage,
+  parseCounterBetSettlementH2hIdFromMessage,
+} from '@/services/dbOps';
+import { CounterBetSettlementDmCard } from '../CounterBetSettlementDmCard';
+import { GameChallengeSettlementDmCard } from '../GameChallengeSettlementDmCard';
 
 export type ChatMessage = {
   id: string;
@@ -23,6 +39,8 @@ interface ChatPaneProps {
   onDeleteMessage?: (messageId: string) => void;
   onOpenProfile?: (userId: string) => void;
   onClose?: () => void;
+  /** Open full-screen settle recap for counter-bet or game challenge. */
+  onPeerSettleOpen?: (payload: { kind: 'h2h' | 'gc'; id: string }) => void;
 }
 
 const formatTime = (ms: number) => {
@@ -41,6 +59,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   onDeleteMessage,
   onOpenProfile,
   onClose,
+  onPeerSettleOpen,
 }) => {
   const listRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -129,13 +148,24 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           <div className="space-y-3">
             {messages.map((m) => {
               const isSelf = m.fromUserId === currentUserId;
+              const gcId = isGameChallengeMessageText(m.text) ? parseGameChallengeIdFromMessage(m.text) : null;
+              const settleGcId = isGcSettleMessageText(m.text) ? parseGcSettleChallengeIdFromMessage(m.text) : null;
+              const settleH2hId = isCounterBetSettlementMessageText(m.text)
+                ? parseCounterBetSettlementH2hIdFromMessage(m.text)
+                : null;
+              const counterH2hId =
+                !settleH2hId &&
+                !settleGcId &&
+                isCounterBetInviteMessageText(m.text)
+                  ? parseCounterBetInviteIdFromMessage(m.text)
+                  : null;
               return (
                 <div
                   key={m.id}
                   className={`group flex ${isSelf ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`chat-bubble max-w-[80%] rounded-2xl border px-3 py-2.5 ${
+                    className={`chat-bubble max-w-[min(92%,420px)] rounded-2xl border px-3 py-2.5 ${
                       isSelf
                         ? 'chat-bubble-self bg-blue-600/15 border-blue-400/30'
                         : 'chat-bubble-other bg-slate-950/20 border-slate-700/60'
@@ -153,10 +183,28 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                           />
                         </div>
                       )}
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm chat-bubble-text whitespace-pre-wrap text-slate-100">{m.text}</p>
-                          {isSelf && onDeleteMessage ? (
+                          {gcId ? (
+                            <GameChallengeDmCard challengeId={gcId} currentUserId={currentUserId} />
+                          ) : settleGcId ? (
+                            <GameChallengeSettlementDmCard
+                              challengeId={settleGcId}
+                              currentUserId={currentUserId}
+                              onOpenFull={() => onPeerSettleOpen?.({ kind: 'gc', id: settleGcId })}
+                            />
+                          ) : settleH2hId ? (
+                            <CounterBetSettlementDmCard
+                              h2hId={settleH2hId}
+                              currentUserId={currentUserId}
+                              onOpenFull={() => onPeerSettleOpen?.({ kind: 'h2h', id: settleH2hId })}
+                            />
+                          ) : counterH2hId ? (
+                            <CounterBetDmCard h2hId={counterH2hId} currentUserId={currentUserId} />
+                          ) : (
+                            <p className="text-sm chat-bubble-text whitespace-pre-wrap text-slate-100">{m.text}</p>
+                          )}
+                          {isSelf && onDeleteMessage && !gcId && !counterH2hId && !settleH2hId && !settleGcId ? (
                             <button
                               type="button"
                               onClick={() => onDeleteMessage(m.id)}

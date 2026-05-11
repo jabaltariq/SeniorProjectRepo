@@ -1,19 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bet, Market, MarketOption } from '../models';
-import { Trash2, X, Minus, TrendingUp, RefreshCcw, AlertCircle } from 'lucide-react';
+import { X, TrendingUp, RefreshCcw, AlertCircle, Info, Wallet, History, CornerDownRight } from 'lucide-react';
 import { BoostType } from '@/services/dbOps.ts';
-import { computeParlayRollup } from '@/services/parlayRollup';
 
-type SlipTab = 'SINGLES' | 'PARLAYS';
+type SlipTab = 'SINGLES' | 'PARLAYS' | 'ACTIVE';
+type ActivePendingFilter = 'ALL' | 'SINGLES' | 'PARLAYS';
 
 interface BetSlipProps {
   selection: { market: Market; option: MarketOption } | null;
   parlaySelections: Array<{ market: Market; option: MarketOption }>;
   activeBets: Bet[];
-  onPlaceBet: (stake: number, betType?: 'single' | 'parlay') => void;
+  onPlaceBet: (
+    stake: number,
+    betType?: 'single' | 'parlay',
+    singleTarget?: { market: Market; option: MarketOption } | null,
+  ) => void;
   onClose: () => void;
   onClear: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
+  onFocusSelection: (market: Market, option: MarketOption) => void;
   balance: number;
   activeBoost: BoostType | null;
   limitError: string | null;
@@ -23,43 +28,49 @@ interface BetSlipProps {
    *  `limitError` so it does NOT disable the place-bet button — the user
    *  may still have a valid parlay queued up. */
   parlayRuleError?: string | null;
-  /** Click handler for the "View all" link in the Recent Bets card header.
-   *  Wired by the parent to react-router navigate('/history'). Optional so
-   *  the BetSlip stays usable in screens where /history isn't reachable. */
-  onViewAllHistory?: () => void;
+  /** Paper slip in light theme; dark chrome when app uses ocean theme. */
+  isLightMode?: boolean;
+  /** Active tab: open full betting history (e.g. react-router `navigate('/history')`). */
+  onGoToHistory?: () => void;
 }
 
 export const BetSlip: React.FC<BetSlipProps> = ({
-                                                  selection,
-                                                  parlaySelections,
-                                                  activeBets,
-                                                  onPlaceBet,
-                                                  onClose,
-                                                  onClear,
-                                                  onSelectBet,
-                                                  balance,
-                                                  activeBoost,
-                                                  limitError,
-                                                  parlayRuleError,
-                                                  onViewAllHistory,
-                                                }) => {
+  selection,
+  parlaySelections,
+  activeBets,
+  onPlaceBet,
+  onClose,
+  onClear,
+  onSelectBet,
+  onFocusSelection,
+  balance,
+  activeBoost,
+  limitError,
+  parlayRuleError,
+  isLightMode = true,
+  onGoToHistory,
+}) => {
   const [stakeInput, setStakeInput] = useState<string>('20');
+  /** Per-queued-pick stake on Singles tab (each pick is its own ticket). */
+  const [singleStakes, setSingleStakes] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<SlipTab>('SINGLES');
+  const [activePendingFilter, setActivePendingFilter] = useState<ActivePendingFilter>('ALL');
   const [expandedParlays, setExpandedParlays] = useState<Record<string, boolean>>({});
   const previousParlayCount = useRef(0);
   const previousSelectionKey = useRef<string | null>(null);
 
-  const isSinglesEmpty = !selection;
-  const isParlayEmpty = parlaySelections.length === 0;
+  const isQueueEmpty = parlaySelections.length === 0;
   const hasMinimumParlayLegs = parlaySelections.length >= 2;
   const stake = Number(stakeInput) || 0;
   const potentialPayout = selection ? stake * selection.option.odds : 0;
-  const parlayPotentialPayout = stake * (parlaySelections.length ? parlaySelections.reduce((a, s) => a * s.option.odds, 1) : 0);
+  const parlayPotentialPayout =
+    parlaySelections.length > 0
+      ? stake * parlaySelections.reduce((a, s) => a * s.option.odds, 1)
+      : 0;
   const isAffordable = stake <= balance;
-  // "Current" = still pending (game hasn't finalized yet). As soon as a bet
-  // settles via the realtime onSnapshot listener we want it OUT of the
-  // current section so the user sees a live transition from Current ->
-  // Recent Bets without a refresh.
+  const darkSlip = !isLightMode;
+  const cx = (...parts: Array<string | false | undefined>) => parts.filter(Boolean).join(' ');
+
   const isPending = (b: Bet) => (b.status ?? 'PENDING') === 'PENDING';
   const singleBets = useMemo(
     () => activeBets.filter((b) => (b.betType ?? 'single') === 'single' && isPending(b)),
@@ -70,28 +81,18 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     [activeBets],
   );
 
-  // Settled bets, newest-first by settledAt (fall back to placedAt for
-  // legacy rows that pre-date the settledAt write). Capped at 10 per tab
-  // to keep the slip from turning into a history page; the dedicated
-  // history view in DashboardView handles longer-term browsing.
-  const settledSortKey = (b: Bet) =>
-    (b.settledAt?.getTime?.() ?? b.placedAt.getTime());
-  const recentSingles = useMemo(
-    () => activeBets
-        .filter((b) => (b.betType ?? 'single') === 'single' && !isPending(b))
-        .sort((a, b) => settledSortKey(b) - settledSortKey(a))
-        .slice(0, 10),
-    [activeBets],
+  const sortedPendingSingles = useMemo(
+    () => [...singleBets].sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime()),
+    [singleBets],
   );
-  const recentParlays = useMemo(
-    () => activeBets
-        .filter((b) => b.betType === 'parlay' && !isPending(b))
-        .sort((a, b) => settledSortKey(b) - settledSortKey(a))
-        .slice(0, 10),
-    [activeBets],
+  const sortedPendingParlays = useMemo(
+    () => [...parlayBets].sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime()),
+    [parlayBets],
   );
 
-  // Boosted payout display (profit doubled for double_payout)
+  const previewSingle = sortedPendingSingles[0];
+  const previewParlay = sortedPendingParlays[0];
+
   const boostedSinglePayout = useMemo(() => {
     if (!selection || activeBoost !== 'double_payout') return null;
     const profit = potentialPayout - stake;
@@ -105,10 +106,10 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   }, [parlaySelections, activeBoost, parlayPotentialPayout, stake]);
 
   const boostLabel = activeBoost === 'double_payout'
-      ? { icon: <TrendingUp size={10} />, text: 'Double Payout active', color: 'text-amber-300' }
-      : activeBoost === 'money_back'
-          ? { icon: <RefreshCcw size={10} />, text: 'Money Back active', color: 'text-cyan-300' }
-          : null;
+    ? { icon: <TrendingUp size={10} />, text: 'Double Payout active', color: darkSlip ? 'text-amber-200' : 'text-amber-800' }
+    : activeBoost === 'money_back'
+      ? { icon: <RefreshCcw size={10} />, text: 'Money Back active', color: darkSlip ? 'text-cyan-200' : 'text-cyan-800' }
+      : null;
 
   const decimalToAmerican = (decimalOdds: number) => {
     if (!Number.isFinite(decimalOdds) || decimalOdds <= 1) return 0;
@@ -116,22 +117,14 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     return Math.round(-100 / (decimalOdds - 1));
   };
 
+  const fmtAmerican = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+
   const marketToneLabel = (key?: MarketOption['marketKey']) => {
-    if (key === 'h2h') return 'TO WIN';
-    if (key === 'spreads') return 'SPREAD';
-    if (key === 'totals') return 'TOTAL';
-    return 'PICK';
+    if (key === 'h2h') return 'Moneyline';
+    if (key === 'spreads') return 'Spread';
+    if (key === 'totals') return 'Total';
+    return 'Pick';
   };
-
-  const marketTone = useMemo(() => {
-    if (!selection) return '';
-    return marketToneLabel(selection.option.marketKey);
-  }, [selection]);
-
-  const singleAmericanOdds = useMemo(() => {
-    if (!selection) return 0;
-    return decimalToAmerican(selection.option.odds);
-  }, [selection]);
 
   const combinedParlayDecimalOdds = useMemo(() => {
     if (parlaySelections.length === 0) return 0;
@@ -139,26 +132,29 @@ export const BetSlip: React.FC<BetSlipProps> = ({
   }, [parlaySelections]);
 
   const parlayAmericanOdds = useMemo(
-      () => decimalToAmerican(combinedParlayDecimalOdds),
-      [combinedParlayDecimalOdds]
+    () => decimalToAmerican(combinedParlayDecimalOdds),
+    [combinedParlayDecimalOdds],
   );
 
   const parlayLegs = useMemo(
-      () =>
-          parlaySelections.map((sel) => {
-            const odds = decimalToAmerican(sel.option.odds);
-            return {
-              id: `${sel.market.id}:${sel.option.id}`,
-              market: sel.market,
-              option: sel.option,
-              name: sel.option.label,
-              matchup: sel.market.title,
-              odds: odds >= 0 ? `+${odds}` : `${odds}`,
-              lineLabel: marketToneLabel(sel.option.marketKey),
-            };
-          }),
-      [parlaySelections]
+    () =>
+      parlaySelections.map((sel) => {
+        const am = decimalToAmerican(sel.option.odds);
+        return {
+          id: `${sel.market.id}:${sel.option.id}`,
+          market: sel.market,
+          option: sel.option,
+          name: sel.option.label,
+          matchup: sel.market.title,
+          odds: fmtAmerican(am),
+          lineLabel: marketToneLabel(sel.option.marketKey),
+          isLive: sel.market.status === 'LIVE',
+        };
+      }),
+    [parlaySelections],
   );
+
+  const anyParlayLegLive = parlayLegs.some((l) => l.isLive);
 
   useEffect(() => {
     const wasParlay = previousParlayCount.current >= 2;
@@ -177,8 +173,24 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     const key = `${selection.market.id}:${selection.option.id}`;
     if (previousSelectionKey.current === key) return;
     previousSelectionKey.current = key;
+    if (parlaySelections.length >= 2) return;
     setTab('SINGLES');
-  }, [selection]);
+  }, [selection, parlaySelections.length]);
+
+  useEffect(() => {
+    setSingleStakes((prev) => {
+      const next = { ...prev };
+      for (const s of parlaySelections) {
+        const id = `${s.market.id}:${s.option.id}`;
+        if (next[id] === undefined) next[id] = '20';
+      }
+      const allowed = new Set(parlaySelections.map((s) => `${s.market.id}:${s.option.id}`));
+      for (const k of Object.keys(next)) {
+        if (!allowed.has(k)) delete next[k];
+      }
+      return next;
+    });
+  }, [parlaySelections]);
 
   const setStakeFromInput = (raw: string) => {
     const cleaned = raw.replace(/[^\d.]/g, '');
@@ -192,553 +204,975 @@ export const BetSlip: React.FC<BetSlipProps> = ({
     setStakeInput(cleaned.startsWith('.') ? `0${cleaned}` : cleaned);
   };
 
+  const setLegStakeFromInput = (legId: string, raw: string) => {
+    const cleaned = raw.replace(/[^\d.]/g, '');
+    if (cleaned === '') {
+      setSingleStakes((p) => ({ ...p, [legId]: '0' }));
+      return;
+    }
+    const parts = cleaned.split('.');
+    if (parts.length > 2) return;
+    if (parts[1] && parts[1].length > 2) return;
+    const normalized = cleaned.startsWith('.') ? `0${cleaned}` : cleaned;
+    setSingleStakes((p) => ({ ...p, [legId]: normalized }));
+  };
+
   const toggleParlayDetails = (betId: string) => {
     setExpandedParlays((prev) => ({ ...prev, [betId]: !prev[betId] }));
   };
 
-  const hasAnyPick = !isSinglesEmpty || !isParlayEmpty;
-  const singlesPlaceDisabled = isSinglesEmpty || !isAffordable || stake <= 0 || !!limitError;
-  const parlayPlaceDisabled  = !hasMinimumParlayLegs || !isAffordable || stake <= 0 || !!limitError;
-  const tabLabels: Record<SlipTab, string> = { SINGLES: 'Singles', PARLAYS: 'Parlays' };
+  const hasAnyPick = !isQueueEmpty;
+  const parlayPlaceDisabled = !hasMinimumParlayLegs || !isAffordable || stake <= 0 || !!limitError;
 
-  const cardClass = 'rounded-xl border border-slate-800 bg-[#100d1f]';
+  const slipShell = cx(
+    'rounded-t-2xl lg:rounded-none shadow-xl lg:shadow-none',
+    darkSlip
+      ? 'border-t border-[#3FA9F5]/25 lg:border-t-0 lg:border-l border-slate-700/75 bg-[#171427] text-slate-100'
+      : 'border border-slate-200 bg-white lg:border-l lg:border-slate-200 text-slate-900',
+  );
+  const slipAccentBtn = 'bg-[#3FA9F5] hover:bg-[#2e9ae8] text-slate-900';
+  const slipAccentBtnDisabled = darkSlip ? 'bg-slate-700 text-slate-500' : 'bg-slate-200 text-slate-400';
 
-  // Boost banner shown inside the bet card when a boost is active
-  const BoostBanner = () => boostLabel ? (
-      <div className={`mt-2 flex items-center gap-1.5 rounded-lg border border-slate-700/60 bg-slate-900/60 px-2.5 py-1.5 text-[10px] font-semibold ${boostLabel.color}`}>
+  const headerBadgeCount =
+    tab === 'ACTIVE' ? singleBets.length + parlayBets.length : parlaySelections.length;
+
+  const BoostBanner = () =>
+    boostLabel ? (
+      <div
+        className={cx(
+          'mt-3 flex flex-wrap items-center gap-1.5 rounded-lg border px-2.5 py-2 text-[10px] font-semibold',
+          darkSlip ? 'border-amber-500/35 bg-amber-500/10' : 'border-amber-200 bg-amber-50',
+          boostLabel.color,
+        )}
+      >
         {boostLabel.icon}
         {boostLabel.text}
         {activeBoost === 'double_payout' && (
-            <span className="ml-auto text-slate-400 normal-case font-normal">
-          Payout doubles to <span className="text-amber-200 font-bold">
-            ${(tab === 'SINGLES' ? boostedSinglePayout : boostedParlayPayout)?.toFixed(2) ?? '—'}
+          <span className={cx('ml-auto normal-case font-normal', darkSlip ? 'text-slate-400' : 'text-slate-600')}>
+            {tab === 'SINGLES' && parlaySelections.length >= 2 ? (
+              <>Doubles the win payout on each single you place.</>
+            ) : (
+              <>
+                Payout doubles to{' '}
+                <span className={cx('font-bold', darkSlip ? 'text-amber-100' : 'text-amber-900')}>
+                  ${(tab === 'SINGLES' ? boostedSinglePayout : boostedParlayPayout)?.toFixed(2) ?? '—'}
+                </span>
+              </>
+            )}
           </span>
-        </span>
         )}
         {activeBoost === 'money_back' && (
-            <span className="ml-auto text-slate-400 normal-case font-normal">Stake refunded if you lose</span>
+          <span className={cx('ml-auto normal-case font-normal', darkSlip ? 'text-slate-400' : 'text-slate-600')}>
+            Stake refunded if you lose
+          </span>
         )}
       </div>
-  ) : null;
+    ) : null;
 
-  // Limit error banner
-  const LimitBanner = () => limitError ? (
-      <div className="mt-2 flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-red-400">
+  const LimitBanner = () =>
+    limitError ? (
+      <div
+        className={cx(
+          'mt-3 flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-[10px] font-semibold',
+          darkSlip ? 'border-red-500/35 bg-red-500/10 text-red-300' : 'border-red-200 bg-red-50 text-red-700',
+        )}
+      >
         <AlertCircle size={11} />
         {limitError}
       </div>
-  ) : null;
+    ) : null;
 
-  // Compute the actual amount returned to the wallet for a settled bet.
-  // Singles and non-reduced parlays use stored potentialPayout; reduced
-  // parlays (some legs pushed) get recomputed via computeParlayRollup so
-  // the slip never overstates winnings. Boost adjustments are not
-  // reflected here yet — see TODO when we surface boost-aware payouts.
-  const settledReturn = (bet: Bet): { kind: 'WON' | 'PUSH' | 'LOST' | 'VOID' | 'CANCELLED'; amount: number } => {
-    const status = (bet.status ?? 'PENDING').toUpperCase();
-    if (status === 'WON') {
-      if (bet.betType === 'parlay' && bet.parlayLegs?.length) {
-        const rollup = computeParlayRollup(bet.parlayLegs, bet.stake);
-        if (rollup.state === 'WON') return { kind: 'WON', amount: rollup.payout };
-      }
-      return { kind: 'WON', amount: bet.potentialPayout };
-    }
-    if (status === 'PUSH' || status === 'VOID' || status === 'CANCELLED') {
-      return { kind: status, amount: bet.stake };
-    }
-    return { kind: 'LOST', amount: 0 };
-  };
-
-  // Recent settled bets card — sibling of "Current Singles/Parlays" cards.
-  // Uses one component for both kinds so we don't duplicate empty-state /
-  // header / scroll-frame styling four times across the tab branches.
-  const RecentBetsCard: React.FC<{ title: string; bets: Bet[]; emptyText: string; kind: 'single' | 'parlay' }> =
-      ({ title, bets, emptyText, kind }) => (
-      <div className={`${cardClass} p-3.5`}>
-        <div className="mb-2.5 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">{title}</p>
-          <div className="flex items-center gap-2">
-            {onViewAllHistory ? (
-                <button
-                    type="button"
-                    onClick={onViewAllHistory}
-                    className="text-[10px] font-bold uppercase tracking-wider text-violet-300 hover:text-violet-200 transition-colors"
-                >
-                  View all
-                </button>
-            ) : null}
-            <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{bets.length}</span>
-          </div>
-        </div>
-        {bets.length === 0 ? (
-            <p className="text-xs text-slate-500">{emptyText}</p>
-        ) : (
-            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-              {bets.map((bet) => {
-                const { kind: outcome, amount } = settledReturn(bet);
-                const tone =
-                    outcome === 'WON'  ? { row: 'border-l-emerald-500',  pill: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300', label: `Won $${amount.toFixed(2)}` } :
-                    outcome === 'LOST' ? { row: 'border-l-red-500',      pill: 'border-red-500/40 bg-red-500/15 text-red-300',           label: 'Lost' } :
-                    outcome === 'PUSH' ? { row: 'border-l-amber-500',    pill: 'border-amber-500/40 bg-amber-500/15 text-amber-300',     label: `Push $${amount.toFixed(2)}` } :
-                                          { row: 'border-l-slate-500',    pill: 'border-slate-500/40 bg-slate-500/15 text-slate-300',     label: outcome === 'VOID' ? 'Void' : 'Cancelled' };
-                return (
-                    <div key={bet.id} className={`rounded-xl border-l-4 ${tone.row} border-y border-r border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-900/70 p-2.5 shadow-[0_1px_0_rgba(148,163,184,0.12)_inset]`}>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-100 truncate">{bet.optionLabel}</p>
-                          <p className="mt-0.5 text-[11px] text-slate-400 truncate">{bet.marketTitle}</p>
-                        </div>
-                        <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.pill}`}>
-                          {tone.label}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between text-[11px]">
-                        <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-200">Stake ${bet.stake.toFixed(2)}</span>
-                        <span className="font-semibold text-slate-400">@ {bet.odds.toFixed(2)}</span>
-                      </div>
-                      {kind === 'parlay' && !!bet.parlayLegs?.length && (
-                          <>
-                            <button
-                                type="button"
-                                onClick={() => toggleParlayDetails(bet.id)}
-                                className="mt-1.5 text-[10px] font-semibold text-violet-300 hover:text-violet-200"
-                            >
-                              {expandedParlays[bet.id] ? 'hide legs' : `show ${bet.parlayLegs.length} legs`}
-                            </button>
-                            {expandedParlays[bet.id] && (
-                                <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                  <div className="space-y-1.5">
-                                    {bet.parlayLegs.map((leg, idx) => {
-                                      const legResult = (leg.result ?? 'PENDING').toUpperCase();
-                                      const legColor =
-                                          legResult === 'WON'  ? 'text-emerald-300' :
-                                          legResult === 'LOST' ? 'text-red-300' :
-                                          legResult === 'PUSH' ? 'text-amber-300' :
-                                          legResult === 'VOID' ? 'text-slate-400' :
-                                                                  'text-slate-500';
-                                      return (
-                                          <div key={`${bet.id}-leg-${idx}`} className="flex items-center justify-between gap-2 rounded-md border border-slate-800/70 bg-slate-900/70 px-2 py-1.5">
-                                            <div className="min-w-0">
-                                              <p className="text-[10px] font-semibold text-slate-200 truncate">{leg.optionLabel}</p>
-                                              <p className="text-[9px] text-slate-500 truncate">{leg.marketTitle}</p>
-                                            </div>
-                                            <span className={`shrink-0 text-[9px] font-bold uppercase ${legColor}`}>{legResult}</span>
-                                          </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                            )}
-                          </>
-                      )}
-                    </div>
-                );
-              })}
-            </div>
+  const StakeField = ({ compact, fullWidth }: { compact?: boolean; fullWidth?: boolean }) => (
+    <div
+      className={cx(
+        'flex items-center rounded-md border px-2',
+        fullWidth ? 'w-full py-2' : compact ? 'w-[4.75rem] shrink-0 py-1' : 'min-w-[4.5rem] py-1.5',
+        darkSlip ? 'border-slate-600 bg-slate-950' : 'border-slate-300 bg-white',
+      )}
+    >
+      <span className={cx('text-xs mr-0.5 shrink-0', darkSlip ? 'text-slate-500' : 'text-slate-400')}>$</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={stakeInput}
+        onChange={(e) => setStakeFromInput(e.target.value)}
+        className={cx(
+          'min-w-0 flex-1 bg-transparent text-xs font-semibold outline-none tabular-nums',
+          compact && !fullWidth ? 'text-right' : '',
+          darkSlip ? 'text-slate-100' : 'text-slate-900',
         )}
-      </div>
+        aria-label="Wager amount"
+      />
+    </div>
   );
 
+  const TabButton = ({ id, label }: { id: SlipTab; label: string }) => (
+    <button
+      type="button"
+      onClick={() => setTab(id)}
+      className={cx(
+        'flex-1 rounded-md px-2 py-2 text-[10px] font-bold uppercase tracking-wide transition-colors',
+        tab === id
+          ? darkSlip
+            ? 'bg-[#3FA9F5]/20 text-[#a5e6ff] ring-1 ring-[#3FA9F5]/35 shadow-none'
+            : 'bg-slate-900 text-white shadow-sm'
+          : darkSlip
+            ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800',
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  const CurrentBetPreview = () => {
+    if (tab === 'ACTIVE') return null;
+
+    const isSinglesContext = tab === 'SINGLES';
+    const bet = isSinglesContext ? previewSingle : previewParlay;
+    const count = isSinglesContext ? singleBets.length : parlayBets.length;
+    const label = isSinglesContext ? 'Current single' : 'Current parlay';
+
+    if (!bet && count === 0) return null;
+
+    const am = fmtAmerican(decimalToAmerican(bet.odds));
+    const marketLine =
+      bet.betType === 'parlay'
+        ? `${bet.parlayLegs?.length ?? 0}-leg parlay`
+        : marketToneLabel(bet.pickedMarketKey);
+
+    return (
+      <div
+        className={cx(
+          'mt-4 rounded-xl border-2 border-[#3FA9F5] overflow-hidden shadow-sm',
+          darkSlip ? 'bg-slate-900/70' : 'bg-white',
+        )}
+      >
+        <div
+          className={cx(
+            'flex items-center justify-between gap-2 border-b px-3 py-2',
+            darkSlip ? 'border-slate-700 bg-slate-800/80' : 'border-slate-200 bg-slate-50',
+          )}
+        >
+          <span className={cx('text-xs font-bold', darkSlip ? 'text-slate-100' : 'text-slate-800')}>
+            {label}
+            {count > 0 ? (
+              <span className={cx('ml-1.5 font-semibold', darkSlip ? 'text-slate-400' : 'text-slate-500')}>
+                ({count})
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={() => setTab('ACTIVE')}
+            className="text-[10px] font-bold uppercase tracking-wider text-[#3FA9F5] hover:text-[#7dd3fc]"
+          >
+            View all
+          </button>
+        </div>
+        {bet ? (
+          <div className="p-3">
+            <div className="flex items-start gap-2">
+              <p className={cx('min-w-0 flex-1 text-sm font-bold leading-tight pr-1', darkSlip ? 'text-slate-100' : 'text-slate-900')}>
+                {bet.optionLabel}
+              </p>
+              <div className="flex w-[4.75rem] shrink-0 flex-col items-end gap-0.5 text-right">
+                <span className={cx('text-sm font-bold tabular-nums', darkSlip ? 'text-[#7dd3fc]' : 'text-slate-900')}>{am}</span>
+              </div>
+            </div>
+            <div className="mt-1 flex gap-2">
+              <div className="min-w-0 flex-1 pr-1">
+                <p className={cx('text-[10px] font-semibold uppercase tracking-wide', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                  {marketLine}
+                </p>
+                <p className={cx('mt-0.5 text-xs leading-snug', darkSlip ? 'text-slate-400' : 'text-slate-600')}>{bet.marketTitle}</p>
+              </div>
+              <div className="flex w-[4.75rem] shrink-0 flex-col items-end justify-start pt-0.5">
+                <p className={cx('text-[9px] font-bold uppercase tracking-wide', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                  Total wager
+                </p>
+                <p className={cx('text-sm font-bold tabular-nums', darkSlip ? 'text-slate-100' : 'text-slate-900')}>
+                  ${bet.stake.toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            {bet.betType === 'parlay' && !!bet.parlayLegs?.length && (
+              <ul className={cx('mt-2 space-y-1 border-t pt-2', darkSlip ? 'border-slate-700' : 'border-slate-100')}>
+                {bet.parlayLegs.slice(0, 4).map((leg, idx) => (
+                  <li key={`${bet.id}-p-${idx}`} className="flex gap-2 text-[11px]">
+                    <span className="text-slate-500">×</span>
+                    <span
+                      className={cx('min-w-0 font-semibold truncate', darkSlip ? 'text-slate-200' : 'text-slate-800')}
+                    >
+                      {leg.optionLabel}
+                    </span>
+                  </li>
+                ))}
+                {(bet.parlayLegs?.length ?? 0) > 4 ? (
+                  <li className={cx('text-[10px] pl-4', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                    +{(bet.parlayLegs!.length ?? 0) - 4} more
+                  </li>
+                ) : null}
+              </ul>
+            )}
+
+            <div className={cx('mt-3 border-t pt-3', darkSlip ? 'border-slate-700' : 'border-slate-200')}>
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <p className={cx('text-[9px] font-bold uppercase tracking-wide', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                    Total payout
+                  </p>
+                  <p className={cx('text-sm font-bold tabular-nums', darkSlip ? 'text-slate-100' : 'text-slate-900')}>
+                    ${bet.potentialPayout.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className={cx('p-3 text-xs', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+            No pending {isSinglesContext ? 'singles' : 'parlays'}.
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  /** Active-tab card matching sportsbook “pending bet” layout (teal border, header strip, wager/payout, cashout row). */
+  const PendingBetActiveCard: React.FC<{ bet: Bet; variant: 'single' | 'parlay' }> = ({ bet, variant }) => {
+    const am = fmtAmerican(decimalToAmerican(bet.odds));
+    const marketLine =
+      variant === 'parlay'
+        ? `${bet.parlayLegs?.length ?? 0}-PICK PARLAY`
+        : marketToneLabel(bet.pickedMarketKey).toUpperCase();
+    const matchup =
+      variant === 'parlay' ? bet.marketTitle.replace(/\s*\|\s*/g, ' · ') : bet.marketTitle;
+    const stakeStr = bet.stake.toFixed(2);
+    const payoutStr = bet.potentialPayout.toFixed(2);
+
+    return (
+      <div
+        className={cx(
+          'overflow-hidden rounded-xl border-2 border-[#3FA9F5] shadow-sm',
+          darkSlip ? 'bg-slate-950/50' : 'bg-white',
+        )}
+      >
+        <div
+          className={cx(
+            'flex items-center justify-between border-b px-3 py-2.5',
+            darkSlip ? 'border-slate-700 bg-slate-800/90' : 'border-slate-200 bg-slate-100',
+          )}
+        >
+          <span className={cx('text-xs font-bold tracking-tight', darkSlip ? 'text-slate-100' : 'text-slate-800')}>
+            Active {variant === 'single' ? 'Bet' : 'Parlay'}
+          </span>
+        </div>
+
+        <div className={cx('border-b px-3 py-3', darkSlip ? 'border-slate-700' : 'border-slate-200')}>
+          <div className="flex items-start justify-between gap-2">
+            <p className={cx('min-w-0 text-sm font-bold leading-snug', darkSlip ? 'text-slate-50' : 'text-slate-900')}>
+              {bet.optionLabel}
+            </p>
+            <span className={cx('shrink-0 text-sm font-bold tabular-nums', darkSlip ? 'text-slate-50' : 'text-slate-900')}>
+              {am}
+            </span>
+          </div>
+          <p
+            className={cx(
+              'mt-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]',
+              darkSlip ? 'text-slate-500' : 'text-slate-500',
+            )}
+          >
+            {marketLine}
+          </p>
+          <p className={cx('mt-1 text-xs leading-snug', darkSlip ? 'text-slate-400' : 'text-slate-600')}>{matchup}</p>
+
+          {variant === 'parlay' && !!bet.parlayLegs?.length ? (
+            <>
+              <button
+                type="button"
+                onClick={() => toggleParlayDetails(bet.id)}
+                className="mt-2 text-[10px] font-bold uppercase tracking-wide text-[#3FA9F5] hover:text-[#7dd3fc]"
+              >
+                {expandedParlays[bet.id] ? 'Hide legs' : `Show ${bet.parlayLegs.length} legs`}
+              </button>
+              {expandedParlays[bet.id] ? (
+                <ul
+                  className={cx(
+                    'mt-2 space-y-1.5 rounded-lg border px-2.5 py-2',
+                    darkSlip ? 'border-slate-700 bg-black/20' : 'border-slate-200 bg-slate-50',
+                  )}
+                >
+                  {bet.parlayLegs.map((leg, idx) => (
+                    <li key={`${bet.id}-leg-${idx}`} className="text-[11px] leading-snug">
+                      <span className={cx('font-semibold', darkSlip ? 'text-slate-200' : 'text-slate-800')}>
+                        {leg.optionLabel}
+                      </span>
+                      <span className={cx(darkSlip ? 'text-slate-500' : 'text-slate-500')}> · {leg.marketTitle}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+
+        <div
+          className={cx(
+            'relative border-b px-3 py-3',
+            darkSlip ? 'border-slate-700' : 'border-slate-200',
+          )}
+        >
+          <div
+            className={cx(
+              'pointer-events-none absolute inset-0 opacity-[0.06]',
+              darkSlip ? 'text-white' : 'text-slate-900',
+            )}
+            style={{
+              backgroundImage:
+                'radial-gradient(circle at 90% 40%, currentColor 0%, transparent 55%), radial-gradient(circle at 10% 80%, currentColor 0%, transparent 50%)',
+            }}
+            aria-hidden
+          />
+          <div className="relative grid grid-cols-2 gap-4">
+            <div>
+              <p className={cx('text-base font-bold tabular-nums', darkSlip ? 'text-slate-50' : 'text-slate-900')}>
+                ${stakeStr}
+              </p>
+              <p
+                className={cx(
+                  'mt-0.5 text-[9px] font-bold uppercase tracking-[0.14em]',
+                  darkSlip ? 'text-slate-500' : 'text-slate-500',
+                )}
+              >
+                Total wager
+              </p>
+            </div>
+            <div className="text-right">
+              <p className={cx('text-base font-bold tabular-nums', darkSlip ? 'text-slate-50' : 'text-slate-900')}>
+                ${payoutStr}
+              </p>
+              <p
+                className={cx(
+                  'mt-0.5 text-[9px] font-bold uppercase tracking-[0.14em]',
+                  darkSlip ? 'text-slate-500' : 'text-slate-500',
+                )}
+              >
+                Total payout
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-3">
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            title="Cashout is not available yet."
+            className={cx(
+              'flex w-full items-center justify-center gap-2 rounded-lg bg-[#3FA9F5] py-3 text-xs font-bold uppercase tracking-wide text-white opacity-60 cursor-not-allowed',
+            )}
+          >
+            <Wallet size={16} strokeWidth={2.25} className="shrink-0 opacity-95" aria-hidden />
+            Cashout ${stakeStr}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderActiveTab = () => {
+    const showSingles = activePendingFilter === 'ALL' || activePendingFilter === 'SINGLES';
+    const showParlays = activePendingFilter === 'ALL' || activePendingFilter === 'PARLAYS';
+
+    const ActiveFilterChip = ({ id, label }: { id: ActivePendingFilter; label: string }) => (
+      <button
+        type="button"
+        onClick={() => setActivePendingFilter(id)}
+        className={cx(
+          'flex-1 rounded-md px-1.5 py-2 text-[10px] font-bold uppercase tracking-wide transition-colors',
+          activePendingFilter === id
+            ? darkSlip
+              ? 'bg-[#3FA9F5]/25 text-[#a5e6ff] ring-1 ring-[#3FA9F5]/40'
+              : 'bg-white text-slate-900 shadow-sm'
+            : darkSlip
+              ? 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
+              : 'text-slate-600 hover:bg-slate-200/80',
+        )}
+      >
+        {label}
+      </button>
+    );
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col items-center">
+          <p className={cx('text-[11px] font-black uppercase tracking-[0.22em]', darkSlip ? 'text-slate-300' : 'text-slate-600')}>
+            Active
+          </p>
+          <div className="mt-2.5 w-full max-w-[280px] space-y-2">
+            <div className={cx('flex gap-0.5 rounded-lg p-0.5', darkSlip ? 'bg-slate-900/85' : 'bg-slate-100')}>
+              <ActiveFilterChip id="ALL" label="All" />
+              <ActiveFilterChip id="SINGLES" label="Singles" />
+              <ActiveFilterChip id="PARLAYS" label="Parlays" />
+            </div>
+            {onGoToHistory ? (
+              <button
+                type="button"
+                onClick={onGoToHistory}
+                className={cx(
+                  'flex w-full items-center justify-center gap-1.5 rounded-lg border py-2 text-[11px] font-semibold transition-colors',
+                  darkSlip
+                    ? 'border-slate-600 text-slate-300 hover:border-[#3FA9F5]/50 hover:bg-slate-800 hover:text-slate-100'
+                    : 'border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-white',
+                )}
+              >
+                <History size={14} strokeWidth={2} aria-hidden />
+                History
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {showSingles ? (
+          <div>
+            <p className={cx('mb-2 text-[10px] font-bold uppercase tracking-[0.14em]', darkSlip ? 'text-slate-400' : 'text-slate-500')}>
+              Pending singles
+            </p>
+            {singleBets.length === 0 ? (
+              <p className={cx('text-xs', darkSlip ? 'text-slate-500' : 'text-slate-500')}>None yet.</p>
+            ) : (
+              <div className="no-scrollbar max-h-[min(56vh,28rem)] space-y-3 overflow-y-auto pr-1">
+                {sortedPendingSingles.map((bet) => (
+                  <PendingBetActiveCard key={bet.id} bet={bet} variant="single" />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {showParlays ? (
+          <div>
+            <p className={cx('mb-2 text-[10px] font-bold uppercase tracking-[0.14em]', darkSlip ? 'text-slate-400' : 'text-slate-500')}>
+              Pending parlays
+            </p>
+            {parlayBets.length === 0 ? (
+              <p className={cx('text-xs', darkSlip ? 'text-slate-500' : 'text-slate-500')}>None yet.</p>
+            ) : (
+              <div className="no-scrollbar max-h-[min(56vh,28rem)] space-y-3 overflow-y-auto pr-1">
+                {sortedPendingParlays.map((bet) => (
+                  <PendingBetActiveCard key={bet.id} bet={bet} variant="parlay" />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
-      <div className="fixed bottom-0 left-0 right-0 z-50 lg:static lg:z-auto lg:shrink-0 lg:w-[330px] lg:min-h-0 lg:h-full lg:overflow-y-auto lg:overscroll-contain animate-in slide-in-from-bottom lg:slide-in-from-right duration-300">
-        <div className="betslip-shell mx-4 mb-4 flex min-h-0 flex-col lg:mx-0 lg:mb-0 lg:min-h-full rounded-t-2xl lg:rounded-none lg:h-full p-4 lg:px-4 lg:pb-4 lg:pt-5 shadow-2xl border-t border-violet-500/40 lg:border-t-0 lg:border-l border-slate-700/70 bg-[#171427]">
-          <div className="flex items-center justify-between mb-3">
-            <div className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 px-2 py-1 text-[11px]">
-              <span className="text-slate-300">Balance</span>
-              <span className="font-bold text-violet-300">${balance.toFixed(2)}</span>
+    <div className="no-scrollbar fixed bottom-0 left-0 right-0 z-50 lg:static lg:z-auto lg:shrink-0 lg:w-[340px] lg:min-h-0 lg:h-full lg:overflow-y-auto lg:overscroll-contain animate-in slide-in-from-bottom lg:slide-in-from-right duration-300">
+      <div className={`betslip-shell mx-4 mb-4 flex min-h-0 flex-col lg:mx-0 lg:mb-0 lg:min-h-full lg:h-full p-4 lg:px-4 lg:pb-4 lg:pt-4 ${slipShell}`}>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#3FA9F5] text-xs font-black text-slate-900">
+              {headerBadgeCount > 99 ? '99+' : headerBadgeCount}
+            </span>
+            <h2 className={cx('text-sm font-black uppercase tracking-wide truncate', darkSlip ? 'text-slate-100' : 'text-slate-900')}>
+              Bet slip
+            </h2>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="relative inline-flex shrink-0">
+              <button
+                type="button"
+                className={cx(
+                  'peer flex h-7 w-7 items-center justify-center rounded-full border outline-none',
+                  darkSlip
+                    ? 'border-slate-600 text-[#7dd3fc] hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-[#3FA9F5]/50'
+                    : 'border-blue-200 text-blue-600 hover:bg-blue-50 focus-visible:ring-2 focus-visible:ring-[#3FA9F5]/40',
+                )}
+                aria-label="Bet slip help"
+                aria-describedby="betslip-help-tooltip"
+              >
+                <Info size={14} strokeWidth={2.5} />
+              </button>
+              <div
+                id="betslip-help-tooltip"
+                role="tooltip"
+                className={cx(
+                  'pointer-events-none invisible absolute right-0 top-full z-[70] mt-1.5 w-[min(calc(100vw-2rem),14rem)] rounded-lg border px-3 py-2 text-left text-[10px] leading-snug shadow-lg opacity-0 transition-opacity duration-150',
+                  'peer-hover:visible peer-hover:opacity-100 peer-focus-visible:visible peer-focus-visible:opacity-100',
+                  darkSlip
+                    ? 'border-slate-600 bg-slate-900 text-slate-300 ring-1 ring-white/5'
+                    : 'border-slate-200 bg-white text-slate-600 shadow-slate-900/10',
+                )}
+              >
+                <p className="font-bold text-[11px] text-current">How this slip works</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-3.5 marker:text-current/70">
+                  <li>
+                    <strong className="font-semibold">Singles</strong>: lines you tap appear here; set stake and place one bet at a time for the
+                    focused pick.
+                  </li>
+                  <li>
+                    <strong className="font-semibold">Parlays</strong>: need at least two legs; odds multiply together. Same parlay rules as on the
+                    board still apply.
+                  </li>
+                  <li>
+                    <strong className="font-semibold">Active</strong>: bets you&apos;ve placed that are still pending.
+                  </li>
+                </ul>
+              </div>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="text-slate-500 hover:text-slate-300 transition-colors"
+              className={cx(
+                'transition-colors',
+                darkSlip ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-700',
+              )}
               title="Close bet slip"
               aria-label="Close bet slip"
             >
-              <X size={16} />
+              <X size={18} />
             </button>
           </div>
+        </div>
 
-          {parlayRuleError ? (
-              <div
-                  role="alert"
-                  aria-live="polite"
-                  className="mb-3 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-300"
-              >
-                <AlertCircle size={11} />
-                {parlayRuleError}
-              </div>
-          ) : null}
+        <div className="mb-3 flex items-center justify-between gap-2 text-[11px]">
+          <span className={darkSlip ? 'text-slate-400' : 'text-slate-500'}>Balance</span>
+          <span className={cx('font-bold', darkSlip ? 'text-slate-100' : 'text-slate-900')}>${balance.toFixed(2)}</span>
+        </div>
 
-          <div className="flex border-b border-slate-800 mb-2">
-            {(['SINGLES', 'PARLAYS'] as const).map((t) => (
-                <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTab(t)}
-                    className={`flex-1 pb-2.5 text-[11px] font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors ${
-                        tab === t
-                            ? 'border-violet-400 text-violet-200'
-                            : 'border-transparent text-slate-500 hover:text-slate-400'
-                    }`}
-                >
-                  {tabLabels[t]}
-                </button>
-            ))}
-          </div>
-
-          <button
-              type="button"
-              onClick={onClear}
-              disabled={!hasAnyPick}
-              className="mb-3 flex w-full items-center justify-center gap-1.5 text-[11px] font-semibold text-violet-400 hover:text-violet-300 disabled:opacity-40 disabled:hover:text-violet-400"
+        {parlayRuleError ? (
+          <div
+            role="alert"
+            aria-live="polite"
+            className={cx(
+              'mb-3 flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-[10px] font-semibold',
+              darkSlip ? 'border-amber-500/35 bg-amber-500/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-900',
+            )}
           >
-            <Trash2 size={14} strokeWidth={2} />
-            Remove all selections
-          </button>
+            <AlertCircle size={11} />
+            {parlayRuleError}
+          </div>
+        ) : null}
 
-          {/* ——— Singles ——— */}
-          {tab === 'SINGLES' && selection ? (
-              <div className="mb-4 flex flex-col gap-3">
-                <div className={`${cardClass} p-3`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                  <span className="inline-block rounded bg-violet-600 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
-                    Single
-                  </span>
-                      <p className="mt-2 text-xs font-medium text-slate-200 truncate">{selection.option.label}</p>
-                    </div>
-                    <span className="shrink-0 text-lg font-black text-violet-300">
-                  {singleAmericanOdds >= 0 ? `+${singleAmericanOdds}` : singleAmericanOdds}
-                </span>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Wager</p>
-                      <div className="mt-1 flex items-center rounded-lg border border-slate-700 bg-slate-900/80 px-2.5 py-2">
-                        <span className="text-slate-400 text-sm mr-0.5">$</span>
-                        <input
-                            type="text"
-                            inputMode="decimal"
-                            value={stakeInput}
-                            onChange={(e) => setStakeFromInput(e.target.value)}
-                            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-100 outline-none"
-                            aria-label="Wager amount"
-                        />
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Payout</p>
-                      {boostedSinglePayout ? (
-                          <div className="mt-1">
-                            <p className="text-sm font-semibold line-through text-slate-500">${potentialPayout.toFixed(2)}</p>
-                            <p className="text-2xl font-semibold leading-tight text-amber-300">${boostedSinglePayout.toFixed(2)}</p>
-                          </div>
-                      ) : (
-                          <p className="mt-1 text-2xl font-semibold leading-tight text-slate-100">${potentialPayout.toFixed(2)}</p>
-                      )}
-                    </div>
-                  </div>
-                  <BoostBanner />
-                  <LimitBanner />
-                  {!isAffordable && (
-                      <p className="text-red-400 text-[10px] mt-2 font-semibold">Insufficient funds</p>
+        <div className={cx('mb-3 flex gap-1 rounded-lg p-1', darkSlip ? 'bg-slate-900/80' : 'bg-slate-100')}>
+          <TabButton id="SINGLES" label="Singles" />
+          <TabButton id="PARLAYS" label="Parlays" />
+          <TabButton id="ACTIVE" label="Active" />
+        </div>
+
+        <div className="min-h-0 flex-1">
+          {tab === 'SINGLES' && (
+            <div className="flex flex-col">
+              {isQueueEmpty ? (
+                <div
+                  className={cx(
+                    'rounded-xl border border-dashed px-4 py-12 text-center',
+                    darkSlip ? 'border-slate-600 bg-slate-900/40' : 'border-slate-200 bg-slate-50',
                   )}
-                  <button
-                      type="button"
-                      disabled={singlesPlaceDisabled}
-                      onClick={() => onPlaceBet(stake, 'single')}
-                      className={`mt-3 w-full font-bold py-3 rounded-lg shadow-lg active:scale-[0.99] transition-all text-xs uppercase tracking-wide text-white ${
-                          singlesPlaceDisabled
-                              ? 'bg-slate-700 text-slate-500'
-                              : activeBoost
-                                  ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20'
-                                  : 'bg-violet-600 hover:bg-violet-500 shadow-violet-600/20'
-                      }`}
-                  >
-                    {activeBoost ? `PLACE BET + ${activeBoost === 'double_payout' ? '2× PAYOUT' : 'MONEY BACK'}` : 'PLACE BET'}
-                  </button>
+                >
+                  <p className={cx('text-sm font-semibold', darkSlip ? 'text-slate-200' : 'text-slate-700')}>No picks yet</p>
+                  <p className={cx('mt-1 text-xs', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                    Choose a line from the board to add it here.
+                  </p>
                 </div>
-
-                <div className={`${cardClass} p-3`}>
-                  <div className="flex gap-2.5">
-                    <button
+              ) : (
+                <>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className={cx('text-[10px] font-bold uppercase tracking-[0.14em]', darkSlip ? 'text-slate-400' : 'text-slate-500')}>
+                          Separate picks
+                        </p>
+                      </div>
+                      <button
                         type="button"
-                        onClick={() => onSelectBet(selection.market, selection.option)}
-                        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-red-500/70 bg-red-500/10 text-red-400 hover:bg-red-500/20"
-                        aria-label="Remove selection"
-                    >
-                      <Minus size={14} strokeWidth={2.5} />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-slate-100 truncate">{selection.option.label}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{marketTone}</p>
-                      <p className="text-xs text-slate-500 truncate mt-0.5">{selection.market.title}</p>
+                        onClick={onClear}
+                        className={cx(
+                          'shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold transition-colors',
+                          darkSlip ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-200' : 'text-slate-600 hover:bg-slate-100',
+                        )}
+                      >
+                        Clear all
+                      </button>
                     </div>
-                    <span className="shrink-0 text-base font-bold text-violet-300">
-                  {singleAmericanOdds >= 0 ? `+${singleAmericanOdds}` : singleAmericanOdds}
-                </span>
-                  </div>
-                </div>
 
-                <div className={`${cardClass} p-3.5`}>
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Current Singles</p>
-                    <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{singleBets.length}</span>
-                  </div>
-                  {singleBets.length === 0 ? (
-                      <p className="text-xs text-slate-500">No single bets placed yet.</p>
-                  ) : (
-                      <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
-                        {singleBets.slice(0, 10).map((bet) => (
-                            <div key={bet.id} className="rounded-xl border border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-900/70 p-2.5 shadow-[0_1px_0_rgba(148,163,184,0.12)_inset]">
-                              <p className="text-sm font-semibold text-slate-100 truncate">{bet.optionLabel}</p>
-                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">{bet.marketTitle}</p>
-                              <div className="mt-2 flex items-center justify-between text-[11px]">
-                                <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-200">Stake ${bet.stake.toFixed(2)}</span>
-                                <span className="font-semibold text-emerald-300">To win ${bet.potentialPayout.toFixed(2)}</span>
+                    <div className="no-scrollbar flex max-h-[min(58vh,32rem)] flex-col gap-3 overflow-y-auto pr-0.5">
+                      {parlayLegs.map((leg) => {
+                        const raw = singleStakes[leg.id] ?? '20';
+                        const legStake = Number(raw) || 0;
+                        const basePayout = legStake * leg.option.odds;
+                        const boostedPay =
+                          activeBoost === 'double_payout' && legStake > 0
+                            ? basePayout + (basePayout - legStake)
+                            : null;
+                        const legAffordable = legStake <= balance && legStake > 0;
+                        const betDisabled = !legAffordable || !!limitError;
+                        return (
+                          <div
+                            key={leg.id}
+                            className={cx(
+                              'rounded-xl border p-3 shadow-sm',
+                              darkSlip ? 'border-slate-600 bg-slate-900/85' : 'border-slate-200 bg-white',
+                            )}
+                          >
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => onSelectBet(leg.market, leg.option)}
+                                className={cx(
+                                  'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded',
+                                  darkSlip ? 'text-slate-500 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-100',
+                                )}
+                                aria-label="Remove pick"
+                              >
+                                <X size={14} strokeWidth={2} />
+                              </button>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {leg.isLive ? (
+                                        <span className="rounded px-1 py-0.5 text-[8px] font-bold uppercase bg-slate-900 text-white">
+                                          Live
+                                        </span>
+                                      ) : null}
+                                      <p className={cx('text-sm font-bold leading-snug', darkSlip ? 'text-slate-100' : 'text-slate-900')}>
+                                        {leg.name}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={cx(
+                                      'shrink-0 text-sm font-black tabular-nums',
+                                      darkSlip ? 'text-[#7dd3fc]' : 'text-emerald-700',
+                                    )}
+                                  >
+                                    {leg.odds}
+                                  </span>
+                                </div>
+
+                                <div className="mt-2 flex items-end justify-between gap-2">
+                                  <p
+                                    className={cx(
+                                      'text-[10px] font-bold uppercase tracking-wide',
+                                      darkSlip ? 'text-slate-500' : 'text-slate-500',
+                                    )}
+                                  >
+                                    {leg.lineLabel}
+                                  </p>
+                                  <div
+                                    className={cx(
+                                      'flex w-[5.5rem] shrink-0 items-center rounded-md border px-2 py-1.5',
+                                      darkSlip ? 'border-slate-600 bg-slate-950' : 'border-slate-300 bg-white',
+                                    )}
+                                  >
+                                    <span className={cx('mr-0.5 shrink-0 text-xs', darkSlip ? 'text-slate-500' : 'text-slate-400')}>$</span>
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={raw}
+                                      onChange={(e) => setLegStakeFromInput(leg.id, e.target.value)}
+                                      className={cx(
+                                        'min-w-0 flex-1 bg-transparent text-right text-xs font-semibold tabular-nums outline-none',
+                                        darkSlip ? 'text-slate-100' : 'text-slate-900',
+                                      )}
+                                      aria-label={`Wager for ${leg.name}`}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="mt-2 flex items-start justify-between gap-2 text-[11px]">
+                                  <span className={cx('flex min-w-0 items-start gap-1', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                                    <CornerDownRight size={12} className="mt-0.5 shrink-0 opacity-70" aria-hidden />
+                                    <span className="leading-snug">{leg.matchup}</span>
+                                  </span>
+                                  <div className="shrink-0 text-right">
+                                    {boostedPay != null ? (
+                                      <div>
+                                        <p className={cx('text-[10px]', darkSlip ? 'text-slate-500' : 'text-slate-500')}>Payout</p>
+                                        <p className={cx('text-[10px] line-through', darkSlip ? 'text-slate-500' : 'text-slate-400')}>
+                                          ${basePayout.toFixed(2)}
+                                        </p>
+                                        <p className={cx('text-xs font-bold tabular-nums', darkSlip ? 'text-amber-300' : 'text-amber-700')}>
+                                          ${boostedPay.toFixed(2)}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <p className={cx('tabular-nums', darkSlip ? 'text-slate-300' : 'text-slate-700')}>
+                                        <span className={darkSlip ? 'text-slate-500' : 'text-slate-500'}>Payout: </span>
+                                        <span className="font-semibold">${basePayout.toFixed(2)}</span>
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             </div>
-                        ))}
-                      </div>
-                  )}
-                </div>
-                <RecentBetsCard
-                    title="Recent Bets"
-                    bets={recentSingles}
-                    emptyText="No settled singles yet. Once a game ends, results land here."
-                    kind="single"
-                />
-              </div>
-          ) : tab === 'SINGLES' ? (
-              <div className="mb-4 flex flex-col gap-3">
-                <div className={`${cardClass} px-4 py-10 text-center text-slate-400 lg:min-h-[28vh] flex flex-col items-center justify-center`}>
-                  <p className="text-sm font-semibold text-slate-300 mb-1">No singles yet</p>
-                  <p className="text-xs text-slate-500">Pick a line from the board to add it here.</p>
-                </div>
-                <div className={`${cardClass} p-3.5`}>
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Current Singles</p>
-                    <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{singleBets.length}</span>
-                  </div>
-                  {singleBets.length === 0 ? (
-                      <p className="text-xs text-slate-500">No single bets placed yet.</p>
-                  ) : (
-                      <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
-                        {singleBets.slice(0, 10).map((bet) => (
-                            <div key={bet.id} className="rounded-xl border border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-900/70 p-2.5 shadow-[0_1px_0_rgba(148,163,184,0.12)_inset]">
-                              <p className="text-sm font-semibold text-slate-100 truncate">{bet.optionLabel}</p>
-                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">{bet.marketTitle}</p>
-                              <div className="mt-2 flex items-center justify-between text-[11px]">
-                                <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-200">Stake ${bet.stake.toFixed(2)}</span>
-                                <span className="font-semibold text-emerald-300">To win ${bet.potentialPayout.toFixed(2)}</span>
-                              </div>
-                            </div>
-                        ))}
-                      </div>
-                  )}
-                </div>
-                <RecentBetsCard
-                    title="Recent Bets"
-                    bets={recentSingles}
-                    emptyText="No settled singles yet. Once a game ends, results land here."
-                    kind="single"
-                />
-              </div>
-          ) : null}
 
-          {/* ——— Parlays ——— */}
-          {tab === 'PARLAYS' && !isParlayEmpty ? (
-              <div className="mb-4 flex flex-col gap-3">
-                <div className={`${cardClass} p-3`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 rounded bg-violet-600 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
-                    Parlay
-                  </span>
-                      <span className="text-sm font-semibold text-slate-200 truncate">
-                    {parlayLegs.length}-Bet Parlay
-                  </span>
-                    </div>
-                    <span className="shrink-0 text-lg font-black text-violet-300">
-                  {parlayAmericanOdds >= 0 ? `+${parlayAmericanOdds}` : parlayAmericanOdds}
-                </span>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Wager</p>
-                      <div className="mt-1 flex items-center rounded-lg border border-slate-700 bg-slate-900/80 px-2.5 py-2">
-                        <span className="text-slate-400 text-sm mr-0.5">$</span>
-                        <input
-                            type="text"
-                            inputMode="decimal"
-                            value={stakeInput}
-                            onChange={(e) => setStakeFromInput(e.target.value)}
-                            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-100 outline-none"
-                            aria-label="Wager amount"
-                        />
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Payout</p>
-                      {boostedParlayPayout ? (
-                          <div className="mt-1">
-                            <p className="text-sm font-semibold line-through text-slate-500">${parlayPotentialPayout.toFixed(2)}</p>
-                            <p className="text-2xl font-semibold leading-tight text-amber-300">${boostedParlayPayout.toFixed(2)}</p>
+                            <button
+                              type="button"
+                              disabled={betDisabled}
+                              onClick={() => onPlaceBet(legStake, 'single', { market: leg.market, option: leg.option })}
+                              className={cx(
+                                'mt-3 w-full rounded-lg py-2.5 text-xs font-black uppercase tracking-wide active:scale-[0.99]',
+                                betDisabled
+                                  ? slipAccentBtnDisabled
+                                  : activeBoost
+                                    ? 'bg-amber-500 text-slate-900 hover:bg-amber-400'
+                                    : slipAccentBtn,
+                              )}
+                            >
+                              {activeBoost
+                                ? `Bet · ${activeBoost === 'double_payout' ? '2× payout' : 'Money back'}`
+                                : 'Bet'}
+                            </button>
+                            {!legAffordable && legStake > 0 ? (
+                              <p className={cx('mt-1.5 text-center text-[10px] font-semibold', darkSlip ? 'text-red-400' : 'text-red-600')}>
+                                Insufficient funds
+                              </p>
+                            ) : null}
                           </div>
-                      ) : (
-                          <p className="mt-1 text-2xl font-semibold leading-tight text-slate-100">${parlayPotentialPayout.toFixed(2)}</p>
-                      )}
+                        );
+                      })}
                     </div>
-                  </div>
-                  <BoostBanner />
-                  <LimitBanner />
-                  {!isAffordable && (
-                      <p className="text-red-400 text-[10px] mt-2 font-semibold">Insufficient funds</p>
-                  )}
-                  {!hasMinimumParlayLegs && (
-                      <p className="text-amber-300 text-[10px] mt-2 font-semibold">Add at least 2 legs to place a parlay.</p>
-                  )}
-                  <button
-                      type="button"
-                      disabled={parlayPlaceDisabled}
-                      onClick={() => onPlaceBet(stake, 'parlay')}
-                      className={`mt-3 w-full font-bold py-3 rounded-lg shadow-lg active:scale-[0.99] transition-all text-xs uppercase tracking-wide text-white ${
-                          parlayPlaceDisabled
-                              ? 'bg-slate-700 text-slate-500'
-                              : activeBoost
-                                  ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20'
-                                  : 'bg-violet-600 hover:bg-violet-500 shadow-violet-600/20'
-                      }`}
-                  >
-                    {activeBoost ? `PLACE BET + ${activeBoost === 'double_payout' ? '2× PAYOUT' : 'MONEY BACK'}` : 'PLACE BET'}
-                  </button>
-                </div>
 
-                <div className={`${cardClass} divide-y divide-slate-800/90`}>
-                  {parlayLegs.map((leg) => (
-                      <div key={leg.id} className="flex gap-2.5 p-3">
+                    {hasMinimumParlayLegs ? (
+                      <button
+                        type="button"
+                        onClick={() => setTab('PARLAYS')}
+                        className={cx(
+                          'w-full rounded-lg border py-2.5 text-center text-[11px] font-semibold transition-colors',
+                          darkSlip
+                            ? 'border-[#3FA9F5]/40 text-[#a5e6ff] hover:border-[#3FA9F5]/60 hover:bg-[#3FA9F5]/10'
+                            : 'border-slate-300 text-slate-800 hover:border-[#3FA9F5] hover:bg-[#3FA9F5]/5',
+                        )}
+                      >
+                        Combine picks into a parlay
+                      </button>
+                    ) : null}
+
+                    <BoostBanner />
+                    <LimitBanner />
+                  </div>
+                </>
+              )}
+              <CurrentBetPreview />
+            </div>
+          )}
+
+          {tab === 'PARLAYS' && (
+            <div className="flex flex-col">
+              {isQueueEmpty ? (
+                <div
+                  className={cx(
+                    'rounded-xl border border-dashed px-4 py-12 text-center',
+                    darkSlip ? 'border-slate-600 bg-slate-900/40' : 'border-slate-200 bg-slate-50',
+                  )}
+                >
+                  <p className={cx('text-sm font-semibold', darkSlip ? 'text-slate-200' : 'text-slate-700')}>Build a parlay</p>
+                  <p className={cx('mt-1 text-xs', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                    Add picks from the board — strict parlay rules still apply.
+                  </p>
+                </div>
+              ) : !hasMinimumParlayLegs ? (
+                <div className={cx('rounded-xl border overflow-hidden', darkSlip ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-white')}>
+                  <div
+                    className={cx(
+                      'border-b px-3 py-2',
+                      darkSlip ? 'border-slate-700 bg-amber-500/10' : 'border-slate-100 bg-amber-50',
+                    )}
+                  >
+                    <p className={cx('text-[11px] font-semibold', darkSlip ? 'text-amber-200' : 'text-amber-900')}>
+                      Add at least one more leg to place a parlay.
+                    </p>
+                  </div>
+                  <div className={cx('divide-y', darkSlip ? 'divide-slate-700' : 'divide-slate-100')}>
+                    {parlayLegs.map((leg) => (
+                      <div key={leg.id} className="flex gap-2 p-3">
                         <button
-                            type="button"
-                            onClick={() => onSelectBet(leg.market, leg.option)}
-                            className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-red-500/70 bg-red-500/10 text-red-400 hover:bg-red-500/20"
-                            aria-label="Remove leg"
+                          type="button"
+                          onClick={() => onSelectBet(leg.market, leg.option)}
+                          className={cx(
+                            'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded',
+                            darkSlip ? 'text-slate-500 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-100',
+                          )}
+                          aria-label="Remove leg"
                         >
-                          <Minus size={14} strokeWidth={2.5} />
+                          <X size={14} />
                         </button>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-bold text-slate-100 truncate">{leg.name}</p>
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{leg.lineLabel}</p>
-                          <p className="text-xs text-slate-500 truncate mt-0.5">{leg.matchup}</p>
+                          <p className={cx('text-sm font-bold', darkSlip ? 'text-slate-100' : 'text-slate-900')}>{leg.name}</p>
+                          <p className={cx('text-[11px]', darkSlip ? 'text-slate-400' : 'text-slate-500')}>{leg.lineLabel}</p>
+                          <p className={cx('text-[11px] truncate', darkSlip ? 'text-slate-400' : 'text-slate-500')}>{leg.matchup}</p>
                         </div>
-                        <span className="shrink-0 text-base font-bold text-violet-300">{leg.odds}</span>
+                        <span className={cx('shrink-0 text-sm font-bold', darkSlip ? 'text-[#7dd3fc]' : 'text-slate-900')}>{leg.odds}</span>
                       </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div
+                    className={cx(
+                      'overflow-hidden rounded-xl border shadow-sm',
+                      darkSlip ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-white',
+                    )}
+                  >
+                    <div
+                      className={cx(
+                        'flex items-center justify-between border-b px-3 py-2',
+                        darkSlip ? 'border-slate-700' : 'border-slate-200',
+                      )}
+                    >
+                      <span className={cx('text-[10px] font-bold uppercase tracking-wide', darkSlip ? 'text-slate-500' : 'text-slate-500')}>
+                        Legs
+                      </span>
+                      <button
+                        type="button"
+                        onClick={onClear}
+                        disabled={!hasAnyPick}
+                        className={cx(
+                          'text-[10px] font-bold uppercase tracking-wide transition-colors disabled:opacity-35',
+                          darkSlip
+                            ? 'text-slate-400 hover:text-slate-200 disabled:hover:text-slate-400'
+                            : 'text-slate-600 hover:text-slate-900 disabled:hover:text-slate-600',
+                        )}
+                      >
+                        Clear all
+                      </button>
+                    </div>
 
-                <div className={`${cardClass} p-3.5`}>
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Current Parlays</p>
-                    <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{parlayBets.length}</span>
-                  </div>
-                  {parlayBets.length === 0 ? (
-                      <p className="text-xs text-slate-500">No parlay bets placed yet.</p>
-                  ) : (
-                      <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
-                        {parlayBets.slice(0, 10).map((bet) => (
-                            <div key={bet.id} className="rounded-xl border border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-900/70 p-2.5 shadow-[0_1px_0_rgba(148,163,184,0.12)_inset]">
-                              <p className="text-sm font-semibold text-slate-100 truncate">{bet.optionLabel}</p>
-                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">{bet.marketTitle}</p>
-                              <p className="mt-1 text-[10px] text-slate-500">{bet.parlayLegs?.length ?? 0} legs</p>
-                              {!!bet.parlayLegs?.length && (
-                                  <button type="button" onClick={() => toggleParlayDetails(bet.id)} className="mt-1 text-[10px] font-semibold text-violet-300 hover:text-violet-200">
-                                    {expandedParlays[bet.id] ? 'hide legs' : 'show legs'}
-                                  </button>
-                              )}
-                              {!!bet.parlayLegs?.length && expandedParlays[bet.id] && (
-                                  <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                    <div className="space-y-1.5">
-                                      {bet.parlayLegs.map((leg, idx) => (
-                                          <div key={`${bet.id}-leg-${idx}`} className="rounded-md border border-slate-800/70 bg-slate-900/70 px-2 py-1.5">
-                                            <p className="text-[10px] font-semibold text-slate-200 truncate">{leg.optionLabel}</p>
-                                            <p className="text-[10px] text-slate-500 truncate">{leg.marketTitle}</p>
-                                            <p className="text-[10px] text-slate-400">odds {leg.odds.toFixed(2)}</p>
-                                          </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                              )}
-                              <div className="mt-2 flex items-center justify-between text-[11px]">
-                                <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-200">Stake ${bet.stake.toFixed(2)}</span>
-                                <span className="font-semibold text-emerald-300">To win ${bet.potentialPayout.toFixed(2)}</span>
-                              </div>
-                            </div>
-                        ))}
+                    <div className={cx('divide-y', darkSlip ? 'divide-slate-700' : 'divide-slate-100')}>
+                      {parlayLegs.map((leg) => (
+                        <div key={leg.id} className="flex gap-2 p-3">
+                          <button
+                            type="button"
+                            onClick={() => onSelectBet(leg.market, leg.option)}
+                            className={cx(
+                              'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded',
+                              darkSlip ? 'text-slate-500 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-100',
+                            )}
+                            aria-label="Remove leg"
+                          >
+                            <X size={14} />
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <p className={cx('text-sm font-bold', darkSlip ? 'text-slate-100' : 'text-slate-900')}>{leg.name}</p>
+                            <p className={cx('text-[11px]', darkSlip ? 'text-slate-400' : 'text-slate-500')}>{leg.lineLabel}</p>
+                          </div>
+                          <span className={cx('shrink-0 text-sm font-bold tabular-nums', darkSlip ? 'text-[#7dd3fc]' : 'text-slate-900')}>
+                            {leg.odds}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div
+                      className={cx(
+                        'space-y-4 px-3 py-3',
+                        darkSlip ? 'bg-slate-900/70' : 'bg-slate-50/95',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {anyParlayLegLive ? (
+                              <span className="rounded px-1 py-0.5 text-[8px] font-bold uppercase bg-slate-900 text-white">
+                                Live
+                              </span>
+                            ) : null}
+                            <span className="rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide bg-violet-600 text-white">
+                              Parlay
+                            </span>
+                            <span className={cx('text-sm font-semibold', darkSlip ? 'text-slate-100' : 'text-slate-800')}>
+                              {parlayLegs.length}-Bet Parlay
+                            </span>
+                          </div>
+                        </div>
+                        <span
+                          className={cx(
+                            'shrink-0 text-base font-black tabular-nums leading-none',
+                            darkSlip ? 'text-violet-300' : 'text-violet-600',
+                          )}
+                        >
+                          {fmtAmerican(parlayAmericanOdds)}
+                        </span>
                       </div>
-                  )}
-                </div>
-                <RecentBetsCard
-                    title="Recent Bets"
-                    bets={recentParlays}
-                    emptyText="No settled parlays yet. Once every leg finalizes, results land here."
-                    kind="parlay"
-                />
-              </div>
-          ) : tab === 'PARLAYS' ? (
-              <div className="mb-4 flex flex-col gap-3">
-                <div className={`${cardClass} px-4 py-10 text-center text-slate-400 lg:min-h-[28vh] flex flex-col items-center justify-center`}>
-                  <p className="text-sm font-semibold text-slate-300 mb-1">No parlay legs yet</p>
-                  <p className="text-xs text-slate-500">Add two or more picks to build a parlay.</p>
-                </div>
-                <div className={`${cardClass} p-3.5`}>
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Current Parlays</p>
-                    <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">{parlayBets.length}</span>
-                  </div>
-                  {parlayBets.length === 0 ? (
-                      <p className="text-xs text-slate-500">No parlay bets placed yet.</p>
-                  ) : (
-                      <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
-                        {parlayBets.slice(0, 10).map((bet) => (
-                            <div key={bet.id} className="rounded-xl border border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-900/70 p-2.5 shadow-[0_1px_0_rgba(148,163,184,0.12)_inset]">
-                              <p className="text-sm font-semibold text-slate-100 truncate">{bet.optionLabel}</p>
-                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">{bet.marketTitle}</p>
-                              <p className="mt-1 text-[10px] text-slate-500">{bet.parlayLegs?.length ?? 0} legs</p>
-                              {!!bet.parlayLegs?.length && (
-                                  <button type="button" onClick={() => toggleParlayDetails(bet.id)} className="mt-1 text-[10px] font-semibold text-violet-300 hover:text-violet-200">
-                                    {expandedParlays[bet.id] ? 'hide legs' : 'show legs'}
-                                  </button>
-                              )}
-                              {!!bet.parlayLegs?.length && expandedParlays[bet.id] && (
-                                  <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                    <div className="space-y-1.5">
-                                      {bet.parlayLegs.map((leg, idx) => (
-                                          <div key={`${bet.id}-leg-${idx}`} className="rounded-md border border-slate-800/70 bg-slate-900/70 px-2 py-1.5">
-                                            <p className="text-[10px] font-semibold text-slate-200 truncate">{leg.optionLabel}</p>
-                                            <p className="text-[10px] text-slate-500 truncate">{leg.marketTitle}</p>
-                                            <p className="text-[10px] text-slate-400">odds {leg.odds.toFixed(2)}</p>
-                                          </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                              )}
-                              <div className="mt-2 flex items-center justify-between text-[11px]">
-                                <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-200">Stake ${bet.stake.toFixed(2)}</span>
-                                <span className="font-semibold text-emerald-300">To win ${bet.potentialPayout.toFixed(2)}</span>
-                              </div>
+
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <p className={cx('text-[9px] font-bold uppercase tracking-wide', darkSlip ? 'text-slate-400' : 'text-slate-500')}>
+                            Wager
+                          </p>
+                          <div className="mt-1.5">
+                            <StakeField fullWidth />
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className={cx('text-[9px] font-bold uppercase tracking-wide', darkSlip ? 'text-slate-400' : 'text-slate-500')}>
+                            Payout
+                          </p>
+                          {boostedParlayPayout ? (
+                            <div className="mt-1.5">
+                              <p className={cx('text-xs line-through', darkSlip ? 'text-slate-500' : 'text-slate-400')}>
+                                ${parlayPotentialPayout.toFixed(2)}
+                              </p>
+                              <p className={cx('text-xl font-bold tabular-nums', darkSlip ? 'text-amber-300' : 'text-amber-700')}>
+                                ${boostedParlayPayout.toFixed(2)}
+                              </p>
                             </div>
-                        ))}
+                          ) : (
+                            <p className={cx('mt-1.5 text-xl font-bold tabular-nums', darkSlip ? 'text-slate-100' : 'text-slate-900')}>
+                              ${parlayPotentialPayout.toFixed(2)}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                  )}
-                </div>
-                <RecentBetsCard
-                    title="Recent Bets"
-                    bets={recentParlays}
-                    emptyText="No settled parlays yet. Once every leg finalizes, results land here."
-                    kind="parlay"
-                />
-              </div>
-          ) : null}
+
+                      <div>
+                        <BoostBanner />
+                        <LimitBanner />
+                        {!isAffordable && (
+                          <p className={cx('text-[10px] mt-2 font-semibold', darkSlip ? 'text-red-400' : 'text-red-600')}>
+                            Insufficient funds
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          disabled={parlayPlaceDisabled}
+                          onClick={() => onPlaceBet(stake, 'parlay')}
+                          className={cx(
+                            'mt-3 w-full rounded-lg py-3 text-xs font-black uppercase tracking-wide active:scale-[0.99]',
+                            parlayPlaceDisabled
+                              ? slipAccentBtnDisabled
+                              : activeBoost
+                                ? 'bg-amber-500 text-slate-900 hover:bg-amber-400'
+                                : slipAccentBtn,
+                          )}
+                        >
+                          {activeBoost
+                            ? `Place parlay · ${activeBoost === 'double_payout' ? '2× payout' : 'Money back'}`
+                            : 'Place parlay'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+              <CurrentBetPreview />
+            </div>
+          )}
+
+          {tab === 'ACTIVE' && renderActiveTab()}
         </div>
+
       </div>
+    </div>
   );
 };

@@ -1,6 +1,6 @@
 import { setDoc, doc, getDoc, getDocs, onSnapshot, collection, deleteDoc, Timestamp, runTransaction, deleteField, query, where, orderBy, limit, writeBatch, increment, QueryDocumentSnapshot, DocumentData, DocumentReference, addDoc } from "firebase/firestore";
 import { db } from "@/models/constants.ts";
-import {Bet, LeaderboardEntry, ParlayLeg, BetStatus, Friend, SocialActivity, HeadToHead, HeadToHeadStatus} from "@/models";
+import {Bet, LeaderboardEntry, ParlayLeg, BetStatus, Friend, SocialActivity, HeadToHead, HeadToHeadStatus, type MockNflGameState} from "@/models";
 import { PROFILE_BACKGROUND_URLS, profileBackgroundForUid } from "@/models/profileBackgrounds";
 import {
     ANONYMOUS_PROFILE_AVATAR_PATH,
@@ -11,6 +11,7 @@ import {
     MODE_TEST_DEFAULT_AVATAR_PATH,
 } from "@/models/defaultProfileAvatars";
 import {randomInt} from "node:crypto";
+import { ensureMockBoardUpToCount, MOCK_NFL_BOARD_TARGET_COUNT } from "@/lib/globalMockNflBoard";
 
 export var currBets = new Array<Bet>;
 
@@ -517,37 +518,21 @@ export async function setSpendingLimits(
 
 
 // ─────────────────────────────────────────────────────────────────
-//  MOCK NFL GAMES (PER USER)
+//  MOCK NFL GAMES (GLOBAL — one board for every signed-in user)
+//  Stored at: mockNflBoard/global
 // ─────────────────────────────────────────────────────────────────
 
-export type MockNflWinner = "HOME" | "AWAY" | null;
+export type { MockNflGameState, MockNflWinner } from "@/models";
 
-export interface MockNflGameState {
-    id: string;
-    week: number;
-    awayTeam: string;
-    homeTeam: string;
-    awayOdds: number;
-    homeOdds: number;
-    totalOverOdds: number;
-    totalUnderOdds: number;
-    spreadLine: number;
-    totalLine: number;
-    status: "UPCOMING" | "FINAL";
-    awayScore: number | null;
-    homeScore: number | null;
-    winner: MockNflWinner;
-    updatedAtMs: number;
+const MOCK_NFL_GLOBAL_COLLECTION = "mockNflBoard";
+const MOCK_NFL_GLOBAL_DOC_ID = "global";
+
+function mockNflGlobalDoc() {
+    return doc(db, MOCK_NFL_GLOBAL_COLLECTION, MOCK_NFL_GLOBAL_DOC_ID);
 }
 
-export async function getUserMockNflGames(uid: string): Promise<MockNflGameState[]> {
-    if (!uid) return [];
-    const snap = await getDoc(doc(db, "userInfo", uid));
-    if (!snap.exists()) return [];
-    const data = snap.data();
-    const raw = data["mockNflGames"];
+export function parseMockNflGamesFromFirestore(raw: unknown): MockNflGameState[] {
     if (!Array.isArray(raw)) return [];
-
     return raw
         .map((row: any): MockNflGameState | null => {
             if (!row || typeof row !== "object") return null;
@@ -562,6 +547,8 @@ export async function getUserMockNflGames(uid: string): Promise<MockNflGameState
                 homeTeam,
                 awayOdds: Number(row.awayOdds) || 1.91,
                 homeOdds: Number(row.homeOdds) || 1.91,
+                spreadAwayOdds: Number(row.spreadAwayOdds) || Number(row.awayOdds) || 1.91,
+                spreadHomeOdds: Number(row.spreadHomeOdds) || Number(row.homeOdds) || 1.91,
                 totalOverOdds: Number(row.totalOverOdds) || 1.91,
                 totalUnderOdds: Number(row.totalUnderOdds) || 1.91,
                 spreadLine: Number(row.spreadLine) || 0,
@@ -576,12 +563,83 @@ export async function getUserMockNflGames(uid: string): Promise<MockNflGameState
         .filter((row: MockNflGameState | null): row is MockNflGameState => row !== null);
 }
 
-export async function saveUserMockNflGames(uid: string, games: MockNflGameState[]): Promise<void> {
-    if (!uid) return;
-    await setDoc(doc(db, "userInfo", uid), {
-        mockNflGames: games,
-        mockNflUpdatedAt: Timestamp.now(),
-    }, { merge: true });
+export async function getGlobalMockNflGames(): Promise<MockNflGameState[]> {
+    const snap = await getDoc(mockNflGlobalDoc());
+    if (!snap.exists()) return [];
+    return parseMockNflGamesFromFirestore(snap.data()?.["games"]);
+}
+
+export async function saveGlobalMockNflGames(games: MockNflGameState[]): Promise<void> {
+    await setDoc(
+        mockNflGlobalDoc(),
+        { games, updatedAt: Timestamp.now() },
+        { merge: true },
+    );
+}
+
+export function subscribeToGlobalMockNflGames(
+    onUpdate: (games: MockNflGameState[]) => void,
+    onError?: (err: Error) => void,
+): () => void {
+    return onSnapshot(
+        mockNflGlobalDoc(),
+        (snap) => {
+            const games = snap.exists() ? parseMockNflGamesFromFirestore(snap.data()?.["games"]) : [];
+            onUpdate(games);
+        },
+        (err) => {
+            if (onError) onError(err as Error);
+            else console.error("subscribeToGlobalMockNflGames failed", err);
+        },
+    );
+}
+
+/** Ensures the global doc has five rows (pads with random UPCOMING games). Safe to call from any client. */
+export async function ensureGlobalMockNflBoardSeeded(): Promise<MockNflGameState[]> {
+    const ref = mockNflGlobalDoc();
+    const out = await runTransaction(db, async (tx) => {
+        const s = await tx.get(ref);
+        const parsed = s.exists() ? parseMockNflGamesFromFirestore(s.data()?.["games"]) : [];
+        const next = ensureMockBoardUpToCount(parsed, MOCK_NFL_BOARD_TARGET_COUNT);
+        tx.set(ref, { games: next, updatedAt: Timestamp.now() }, { merge: true });
+        return next;
+    });
+    return out;
+}
+
+/**
+ * When a global mock game is FINAL, settle every user's singles + parlays touching that market,
+ * then settle any accepted head-to-heads on those bet ids.
+ */
+export async function settleAllUsersForMockNflGame(game: MockNflGameState): Promise<void> {
+    if (game.status !== "FINAL") return;
+    if (game.awayScore == null || game.homeScore == null) return;
+    const marketId = `mock-${game.id}`;
+    const userIds = new Set<string>();
+
+    const singleSnap = await getDocs(
+        query(collection(db, "bets"), where("marketId", "==", marketId), where("status", "==", "PENDING")),
+    );
+    singleSnap.forEach((d) => {
+        const uid = String(d.data()?.["userID"] ?? "");
+        if (uid) userIds.add(uid);
+    });
+
+    const parlaySnap = await getDocs(
+        query(collection(db, "bets"), where("betType", "==", "parlay"), where("status", "==", "PENDING"), limit(400)),
+    );
+    parlaySnap.forEach((d) => {
+        const legs = Array.isArray(d.data()?.["parlayLegs"]) ? d.data()?.["parlayLegs"] : [];
+        const hit = legs.some((L: any) => String(L?.marketId ?? "") === marketId);
+        if (hit) {
+            const uid = String(d.data()?.["userID"] ?? "");
+            if (uid) userIds.add(uid);
+        }
+    });
+
+    for (const uid of userIds) {
+        await settleUserMockNflGameBets(uid, game);
+    }
 }
 
 /**
@@ -667,34 +725,75 @@ export async function settleUserMockNflGameBets(
         return "VOID";
     };
 
+    // Parlay legs carry stable option ids (e.g. "...-total-over"), which are
+    // safer than labels when mock lines get regenerated. Prefer id-based
+    // grading so totals/spreads don't get incorrectly VOIDed and reduced.
+    const outcomeForParlayLeg = (leg: ParlayLeg): "WON" | "LOST" | "PUSH" | "VOID" => {
+        const optionId = String(leg.optionId ?? "");
+        if (optionId.endsWith("-ml-away")) {
+            if (game.awayScore === game.homeScore) return "PUSH";
+            return game.awayScore > game.homeScore ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-ml-home")) {
+            if (game.awayScore === game.homeScore) return "PUSH";
+            return game.homeScore > game.awayScore ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-spread-away")) {
+            const result = margin + game.spreadLine;
+            if (result === 0) return "PUSH";
+            return result > 0 ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-spread-home")) {
+            const result = -margin - game.spreadLine;
+            if (result === 0) return "PUSH";
+            return result > 0 ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-total-over")) {
+            if (totalScore === game.totalLine) return "PUSH";
+            return totalScore > game.totalLine ? "WON" : "LOST";
+        }
+        if (optionId.endsWith("-total-under")) {
+            if (totalScore === game.totalLine) return "PUSH";
+            return totalScore < game.totalLine ? "WON" : "LOST";
+        }
+        // Legacy/fallback bets may not have optionId in expected format.
+        return outcomeFor(leg.optionLabel);
+    };
+
     const pending = (await getBets(uid)).filter(
         (b) => (b.status ?? "PENDING") === "PENDING",
     );
     if (pending.length === 0) return;
 
-    await Promise.all(
-        pending.map(async (bet) => {
-            if (bet.betType === "parlay") {
-                const legs = bet.parlayLegs ?? [];
-                for (let idx = 0; idx < legs.length; idx++) {
-                    const leg = legs[idx];
-                    if (leg.marketId !== marketId) continue;
-                    if (leg.result && leg.result !== "PENDING") continue; // already decided
-                    const result = outcomeFor(leg.optionLabel);
-                    // A parlay leg that we can't recognize for this market is
-                    // recorded as VOID — `computeParlayRollup` treats that the
-                    // same as PUSH (drops the leg from the payout).
-                    await recordParlayLegResult(bet.id, idx, result);
-                }
-                return;
+    // Serialize parlay updates per bet so two legs on the same ticket never
+    // race in separate Firestore transactions (one could read stale legs and
+    // skip the roll-up LOST settle).
+    for (const bet of pending) {
+        if (bet.betType === "parlay") {
+            const legs = bet.parlayLegs ?? [];
+            let wroteAnyLeg = false;
+            for (let idx = 0; idx < legs.length; idx++) {
+                const leg = legs[idx];
+                if (leg.marketId !== marketId) continue;
+                if (leg.result && leg.result !== "PENDING") continue; // already decided
+                const result = outcomeForParlayLeg(leg);
+                // A parlay leg that we can't recognize for this market is
+                // recorded as VOID — `computeParlayRollup` treats that the
+                // same as PUSH (drops the leg from the payout).
+                await recordParlayLegResult(bet.id, idx, result);
+                wroteAnyLeg = true;
             }
+            if (wroteAnyLeg) {
+                await settleParlayBetIfReady(bet.id);
+            }
+            continue;
+        }
 
-            // Single bet on this exact mock market.
-            if (bet.marketId === marketId) {
-                await settleBet(bet, outcomeFor(bet.optionLabel));
-            }
-        }),
-    );
+        // Single bet on this exact mock market.
+        if (bet.marketId === marketId) {
+            await settleBet(bet, outcomeFor(bet.optionLabel));
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -724,6 +823,7 @@ export async function addBet(uid: string, bet: Bet) {
         status:          "PENDING",
         eventId:         bet.eventId  ?? bet.marketId,
         sportKey:        bet.sportKey ?? "",
+        pickedMarketKey: bet.pickedMarketKey ?? null,
         // ──────────────────────────────────────────────────────
     });
     currBets.push(bet);
@@ -817,6 +917,7 @@ export async function placeSingleBet(uid: string, bet: Bet, boost: BoostType | n
                 status:          "PENDING",
                 eventId:         bet.eventId  ?? bet.marketId,
                 sportKey:        bet.sportKey ?? "",
+                pickedMarketKey: bet.pickedMarketKey ?? null,
                 eventStartsAt:   bet.eventStartsAt ? Timestamp.fromDate(bet.eventStartsAt) : null,
                 isFree:          false,
                 boostApplied:    boost ?? null,
@@ -892,6 +993,7 @@ export async function getBets(uid: string): Promise<Bet[]> {
             status:        (data.status   ?? "PENDING") as BetStatus,
             eventId:       data.eventId,
             sportKey:      data.sportKey,
+            pickedMarketKey: data.pickedMarketKey ?? undefined,
             eventStartsAt: data.eventStartsAt?.toDate?.(),
             settledAt:     data.settledAt?.toDate?.(),
             isFree:        data.isFree ?? false,
@@ -955,6 +1057,7 @@ export function subscribeToUserBets(
                     status:        (data.status   ?? "PENDING") as BetStatus,
                     eventId:       data.eventId,
                     sportKey:      data.sportKey,
+                    pickedMarketKey: data.pickedMarketKey ?? undefined,
                     eventStartsAt: data.eventStartsAt?.toDate?.(),
                     settledAt:     data.settledAt?.toDate?.(),
                 };
@@ -1008,6 +1111,7 @@ export async function getPendingBets(): Promise<Bet[]> {
             status:   "PENDING",
             eventId:  data.eventId,
             sportKey: data.sportKey,
+            pickedMarketKey: data.pickedMarketKey ?? undefined,
             isFree:   data.isFree ?? false,
         });
     });
@@ -1094,6 +1198,40 @@ export async function settleBet(
     }
 
     await batch.commit();
+    await runMockBetFollowUpsAfterBetSettled(bet, result);
+}
+
+/**
+ * Singles on the mock NFL board use `marketId` values prefixed with `mock-`.
+ * Parlays store top-level `marketId` like `parlay:mock-…|mock-…` but each leg’s
+ * `marketId` is still a `mock-…` id.
+ */
+export function isMockNflOnlyBet(bet: Pick<Bet, "betType" | "marketId" | "parlayLegs">): boolean {
+    if (bet.betType === "parlay") {
+        const legs = bet.parlayLegs ?? [];
+        return legs.length > 0 && legs.every((leg) => String(leg.marketId).startsWith("mock-"));
+    }
+    return String(bet.marketId ?? "").startsWith("mock-");
+}
+
+/**
+ * Cancels every still-pending slip that is exclusively mock NFL markets: sets
+ * status to CANCELLED and refunds stake via {@link settleBet}. Real Odds API
+ * tickets (non-`mock-` markets) are left unchanged.
+ */
+export async function cancelPendingMockNflBetsForUser(uid: string): Promise<{ cancelledIds: string[] }> {
+    const trimmed = uid.trim();
+    if (!trimmed) return { cancelledIds: [] };
+    const all = await getBets(trimmed);
+    const targets = all.filter(
+        (b) => (b.status ?? "PENDING") === "PENDING" && isMockNflOnlyBet(b),
+    );
+    const cancelledIds: string[] = [];
+    for (const bet of targets) {
+        await settleBet(bet, "CANCELLED");
+        cancelledIds.push(bet.id);
+    }
+    return { cancelledIds };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1432,6 +1570,8 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
 
         const money = typeof data.money === "number" ? data.money : Number(data.money) || 0;
 
+        const challengeWins = Number(data.challengeWins) || 0;
+
         topUserList.push({
             id:            docSnap.id,
             name,
@@ -1440,12 +1580,17 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
             profileBackgroundUrl: resolveProfileBackgroundUrl(docSnap.id, name, data),
             netWorth:      Math.round(money),
             winRate,
+            challengeWins,
             rank:          1,
             isCurrentUser: false,
         });
     }
 
-    topUserList.sort((a, b) => b.netWorth - a.netWorth);
+    topUserList.sort((a, b) => {
+      const w = b.netWorth - a.netWorth;
+      if (w !== 0) return w;
+      return (b.challengeWins ?? 0) - (a.challengeWins ?? 0);
+    });
     topUserList.forEach((user, i) => { user.rank = i + 1; });
 
     return topUserList;
@@ -1811,6 +1956,8 @@ async function buildCommunityActivity(
             action:    isParlay ? "placed a parlay on" : "placed a bet on",
             target:    String(data["marketTitle"] ?? ""),
             timestamp: formatActivityTimestamp(placedAtDate),
+            sortKey:   placedAtDate.getTime(),
+            activityKind: "bet",
         });
     }
 
@@ -1963,6 +2110,100 @@ export async function sendFriendRequest(username : string, senderUid : string | 
         receiver: recipientUid,
     });
     return { success: true };
+}
+
+const PEER_CHALLENGES_COLLECTION = "peerChallenges";
+
+export interface SendPeerChallengeResult {
+    success: boolean;
+    error?: string;
+}
+
+/**
+ * Persists a social challenge from `challengerUid` to `targetUid`.
+ * Counter-bets on a specific slip still use {@link proposeHeadToHead}; this
+ * records the gesture so flows can surface it later without tying it to a bet.
+ */
+export async function sendPeerChallenge(
+    challengerUid: string,
+    targetUid: string,
+): Promise<SendPeerChallengeResult> {
+    if (!challengerUid?.trim() || !targetUid?.trim()) {
+        return { success: false, error: "Missing user" };
+    }
+    if (challengerUid === targetUid) {
+        return { success: false, error: "You can't challenge yourself" };
+    }
+    try {
+        const [targetSnap, challengerSnap] = await Promise.all([
+            getDoc(doc(db, "userInfo", targetUid)),
+            getDoc(doc(db, "userInfo", challengerUid)),
+        ]);
+        if (!targetSnap.exists()) {
+            return { success: false, error: "Player not found" };
+        }
+        if (!challengerSnap.exists()) {
+            return { success: false, error: "Sign in again" };
+        }
+        const challengerData = challengerSnap.data();
+        const challengerName =
+            typeof challengerData?.["name"] === "string" ? (challengerData["name"] as string) : "";
+        const docId = `${challengerUid}_${targetUid}`;
+        await setDoc(
+            doc(db, PEER_CHALLENGES_COLLECTION, docId),
+            {
+                challengerUid,
+                targetUid,
+                challengerName,
+                createdAt: Timestamp.now(),
+                status: "sent",
+            },
+            { merge: true },
+        );
+        return { success: true };
+    } catch (e) {
+        console.error("sendPeerChallenge failed", e);
+        return { success: false, error: "Could not send challenge" };
+    }
+}
+
+export interface CancelPeerChallengeResult {
+    success: boolean;
+    error?: string;
+}
+
+/** Marks a {@link sendPeerChallenge} doc as cancelled (challenger only). */
+export async function cancelPeerChallenge(
+    challengerUid: string,
+    targetUid: string,
+): Promise<CancelPeerChallengeResult> {
+    if (!challengerUid?.trim() || !targetUid?.trim()) {
+        return { success: false, error: "Missing user" };
+    }
+    const docId = `${challengerUid}_${targetUid}`;
+    const ref = doc(db, PEER_CHALLENGES_COLLECTION, docId);
+    try {
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+            return { success: false, error: "Nothing to cancel" };
+        }
+        const data = snap.data();
+        if (String(data["challengerUid"] ?? "") !== challengerUid) {
+            return { success: false, error: "Wrong user" };
+        }
+        if (String(data["status"] ?? "") === "cancelled") {
+            return { success: true };
+        }
+        await setDoc(
+            ref,
+            { status: "cancelled", cancelledAt: Timestamp.now() },
+            { merge: true },
+        );
+        return { success: true };
+    } catch (e) {
+        console.error("cancelPeerChallenge failed", e);
+        return { success: false, error: "Could not cancel" };
+    }
 }
 
 /**
@@ -2296,6 +2537,74 @@ export async function sendDirectMessage(input: SendDirectMessageInput): Promise<
     }
 }
 
+const COUNTER_BET_DM_PREFIX = "COUNTER_BET:";
+/** Machine-readable counter settlement line → render rich card in chat. */
+const H2H_SETTLE_DM_PREFIX = "H2H_SETTLE:";
+
+export function makeDmThreadId(uidA: string, uidB: string): string {
+    const [a, b] = [uidA, uidB].sort((x, y) => x.localeCompare(y));
+    return `dm:${a}:${b}`;
+}
+
+export function isCounterBetInviteMessageText(text: string): boolean {
+    return text.trimStart().startsWith(COUNTER_BET_DM_PREFIX);
+}
+
+export function parseCounterBetInviteIdFromMessage(text: string): string | null {
+    const t = text.trim();
+    if (!t.startsWith(COUNTER_BET_DM_PREFIX)) return null;
+    const id = t.slice(COUNTER_BET_DM_PREFIX.length).trim();
+    return id.length > 0 ? id : null;
+}
+
+export function isCounterBetSettlementMessageText(text: string): boolean {
+    return text.trimStart().startsWith(H2H_SETTLE_DM_PREFIX);
+}
+
+export function parseCounterBetSettlementH2hIdFromMessage(text: string): string | null {
+    const t = text.trim();
+    if (!t.startsWith(H2H_SETTLE_DM_PREFIX)) return null;
+    const id = t.slice(H2H_SETTLE_DM_PREFIX.length).trim();
+    return id.length > 0 ? id : null;
+}
+
+/**
+ * Posts an optional personal note then a machine-readable counter-bet invite in the DM thread.
+ */
+export async function notifyHeadToHeadProposalDm(input: {
+    challengerUid: string;
+    opponentUid: string;
+    h2hId: string;
+    optionalNote?: string;
+}): Promise<void> {
+    const { challengerUid, opponentUid, h2hId, optionalNote } = input;
+    if (!challengerUid || !opponentUid || !h2hId) return;
+    const threadId = makeDmThreadId(challengerUid, opponentUid);
+    const base = Date.now();
+    let seq = 0;
+    const note = (optionalNote ?? "").trim();
+    if (note.length > 0) {
+        const r = await sendDirectMessage({
+            threadId,
+            messageId: `h2h_note_${h2hId}_${base}_${seq++}`,
+            fromUserId: challengerUid,
+            toUserId: opponentUid,
+            text: note,
+            createdAtMs: base,
+        });
+        if (!r.success) console.warn("notifyHeadToHeadProposalDm note failed", r);
+    }
+    const inv = await sendDirectMessage({
+        threadId,
+        messageId: `h2h_inv_${h2hId}_${base}_${seq++}`,
+        fromUserId: challengerUid,
+        toUserId: opponentUid,
+        text: `${COUNTER_BET_DM_PREFIX}${h2hId}`,
+        createdAtMs: base + 1,
+    });
+    if (!inv.success) console.warn("notifyHeadToHeadProposalDm invite failed", inv);
+}
+
 /**
  * Deletes a message only if the acting user is the sender.
  * NOTE: Client-side guard only; Firestore security rules should enforce too.
@@ -2512,9 +2821,11 @@ export async function proposeHeadToHead(
             // Hard lock: no fades after kickoff. Bets written before this field
             // existed (legacy data) won't have eventStartsAt — those skip the
             // lock and rely on the cron's existing settlement gating instead.
+            const slipMarketId = String(betData.marketId ?? "");
+            const mockSlip = slipMarketId.startsWith("mock-");
             const eventStartsTs = betData.eventStartsAt as Timestamp | undefined;
             const eventStartsDate = eventStartsTs?.toDate?.();
-            if (eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
+            if (!mockSlip && eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
                 throw new Error("EVENT_STARTED");
             }
 
@@ -2602,10 +2913,12 @@ export async function acceptHeadToHead(
             if (String(data.originalUserId) !== actingUserId) throw new Error("WRONG_USER");
 
             // Re-check the kickoff lock at accept time (the game may have started
-            // between proposal and acceptance).
+            // between proposal and acceptance). Mock NFL slips skip this (synthetic times).
+            const h2hMarketId = String(data.marketId ?? "");
+            const mockH2h = h2hMarketId.startsWith("mock-");
             const eventStartsTs = data.eventStartsAt as Timestamp | undefined;
             const eventStartsDate = eventStartsTs?.toDate?.();
-            if (eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
+            if (!mockH2h && eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
                 throw new Error("EVENT_STARTED");
             }
 
@@ -2708,7 +3021,7 @@ async function refundChallengerAndClose(
 }
 
 /** Convert a Firestore document into a typed HeadToHead object. */
-function mapHeadToHead(id: string, data: DocumentData): HeadToHead {
+export function mapHeadToHead(id: string, data: DocumentData): HeadToHead {
     const eventStartsAtRaw = data.eventStartsAt as Timestamp | undefined;
     const createdAtRaw     = data.createdAt     as Timestamp | undefined;
     const acceptedAtRaw    = data.acceptedAt    as Timestamp | undefined;
@@ -2814,5 +3127,73 @@ export async function settleHeadToHead(
     } catch (error) {
         const msg = error instanceof Error ? error.message : "UNKNOWN";
         return { success: false, error: msg };
+    }
+}
+
+/** Refunds challenger escrow for any still-pending counter on this bet (bet already graded). */
+async function closePendingHeadToHeadsForOriginalBet(originalBetId: string): Promise<void> {
+    const q = query(collection(db, H2H_COLLECTION), where("originalBetId", "==", originalBetId));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+        const data = d.data();
+        if ((data.status as string) !== "PENDING_ACCEPT") continue;
+        const h2hRef = doc(db, H2H_COLLECTION, d.id);
+        try {
+            await runTransaction(db, async (transaction) => {
+                const s = await transaction.get(h2hRef);
+                if (!s.exists()) return;
+                if ((s.data().status as string) !== "PENDING_ACCEPT") return;
+                const challengerStake = Number(s.data().challengerStake) || 0;
+                const challengerUserId = String(s.data().challengerUserId ?? "");
+                const challengerRef = doc(db, "userInfo", challengerUserId);
+                transaction.update(challengerRef, { money: increment(challengerStake) });
+                transaction.update(h2hRef, { status: "DECLINED", settledAt: Timestamp.now() });
+            });
+        } catch (e) {
+            console.warn("closePendingHeadToHeadsForOriginalBet", d.id, e);
+        }
+    }
+}
+
+/** Settles accepted counter-bets tied to this slip and posts a DM summary. */
+async function settleAcceptedHeadToHeadsForOriginalBet(
+    originalBetId: string,
+    underlyingResult: "WON" | "LOST" | "PUSH" | "CANCELLED",
+): Promise<void> {
+    const q = query(collection(db, H2H_COLLECTION), where("originalBetId", "==", originalBetId));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+        const data = d.data();
+        if ((data.status as string) !== "ACCEPTED") continue;
+        const h2hId = d.id;
+        const originalUserId = String(data.originalUserId ?? "");
+        const challengerUserId = String(data.challengerUserId ?? "");
+        const res = await settleHeadToHead(h2hId, underlyingResult);
+        if (!res.success) continue;
+        const text = `${H2H_SETTLE_DM_PREFIX}${h2hId}`;
+        const base = Date.now();
+        const threadId = makeDmThreadId(originalUserId, challengerUserId);
+        const dm = await sendDirectMessage({
+            threadId,
+            messageId: `h2h_settle_${h2hId}_${base}`,
+            fromUserId: originalUserId,
+            toUserId: challengerUserId,
+            text,
+            createdAtMs: base,
+        });
+        if (!dm.success) console.warn("settleAcceptedHeadToHeadsForOriginalBet DM failed", dm);
+    }
+}
+
+async function runMockBetFollowUpsAfterBetSettled(
+    bet: Bet,
+    result: "WON" | "LOST" | "PUSH" | "VOID" | "CANCELLED",
+): Promise<void> {
+    if (!bet.marketId?.startsWith("mock-")) return;
+    await closePendingHeadToHeadsForOriginalBet(bet.id);
+    const underlying: "WON" | "LOST" | "PUSH" | "CANCELLED" =
+        result === "VOID" ? "PUSH" : result;
+    if (underlying === "WON" || underlying === "LOST" || underlying === "PUSH" || underlying === "CANCELLED") {
+        await settleAcceptedHeadToHeadsForOriginalBet(bet.id, underlying);
     }
 }

@@ -65,6 +65,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
     | { kind: 'enabled'; bet: Bet };
 
   const fadeEligibilityFor = (activity: SocialActivity): FadeEligibility => {
+    if (activity.activityKind && activity.activityKind !== 'bet') return { kind: 'hidden' };
     if (currentUid && activity.userId === currentUid) return { kind: 'hidden' };
     const bet = betList.find((b) => b.id === activity.id);
     if (!bet)                          return { kind: 'disabled', reason: 'Bet details unavailable.' };
@@ -168,7 +169,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                 onClick={() => onChallenge(friend)}
                 className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[10px] font-bold uppercase"
               >
-                <Swords size={14} /> Challenge
+                <Swords size={14} /> Counter
               </button>
             </div>
           ))}
@@ -272,16 +273,34 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
         </div>
 
         <div className="space-y-4">
-          {activities?.map(activity => (
-
+          {activities?.map((activity) => {
+            const isPeer =
+              activity.activityKind === 'peer_counter' || activity.activityKind === 'peer_challenge';
+            const peerAvatarSrc =
+              activity.peerUserAvatarUrl ??
+              (activity.peerUserId && activity.peerUserName
+                ? `/bethub/${defaultAvatarForUid(activity.peerUserId, activity.peerUserName)}`
+                : undefined);
+            return (
             <div key={activity.id} className="glass-card rounded-2xl p-4 flex gap-4 border-slate-800 hover:bg-slate-800/20 transition-all">
-              <UserAvatar
-                initials={activity.userAvatar}
-                imageUrl={activityAvatarUrl(activity)}
-                alt={`${activity.userName}'s avatar`}
-                className="w-10 h-10 rounded-xl flex-shrink-0"
-                textClassName="text-slate-400"
-              />
+              <div className="relative h-10 w-10 flex-shrink-0">
+                <UserAvatar
+                  initials={activity.userAvatar}
+                  imageUrl={activityAvatarUrl(activity)}
+                  alt={`${activity.userName}'s avatar`}
+                  className="h-10 w-10 rounded-xl"
+                  textClassName="text-slate-400"
+                />
+                {activity.peerUserId ? (
+                  <UserAvatar
+                    initials={activity.peerUserAvatar ?? '??'}
+                    imageUrl={peerAvatarSrc}
+                    alt={`${activity.peerUserName ?? 'Opponent'}'s avatar`}
+                    className="absolute -bottom-1 -right-2 h-7 w-7 rounded-lg border-2 border-slate-900"
+                    textClassName="text-[9px] text-violet-200"
+                  />
+                ) : null}
+              </div>
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <p className="text-sm">
@@ -290,6 +309,18 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                     </NavLink>{' '}
                     <span className="text-slate-400">{activity.action}</span>{' '}
                     <span className="font-bold text-blue-400">{activity.target}</span>
+                    {activity.peerUserId ? (
+                      <>
+                        {' '}
+                        <span className="text-slate-500">vs</span>{' '}
+                        <NavLink
+                          to={`/profile/${activity.peerUserId}`}
+                          className="font-bold text-amber-200/95 hover:text-amber-100 transition-colors"
+                        >
+                          {activity.peerUserName ?? 'Opponent'}
+                        </NavLink>
+                      </>
+                    ) : null}
                   </p>
                   <span className="text-[10px] text-slate-600 font-bold uppercase">{activity.timestamp}</span>
                 </div>
@@ -297,7 +328,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                   <button
                       onClick={() => toggleDetails(activity.id)}
                       className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter">
-                    <Eye size={12} /> View Bet
+                    <Eye size={12} /> {isPeer ? 'Details' : 'View Bet'}
                   </button>
 
                   {(() => {
@@ -327,13 +358,16 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                     );
                   })()}
                 </div>
-                {expandedId === activity.id && (() => {
-                  // Resolve the bet once instead of running .find() four
-                  // times and crashing if the row is missing from betList
-                  // (e.g. a freshly-streamed bet whose author doc was
-                  // dropped). placedAt is already a Date by the time it
-                  // reaches us — render it directly instead of calling
-                  // .toDate() on a Date.
+                {expandedId === activity.id && isPeer ? (
+                  <div className="mt-3 p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10 text-sm text-slate-300">
+                    <p className="font-semibold text-slate-200">
+                      {activity.activityKind === 'peer_counter' ? 'Head-to-head counter' : 'Game challenge'}
+                    </p>
+                    <p className="mt-2 text-slate-400">
+                      {activity.userName} {activity.action} <span className="text-slate-200">{activity.target}</span>
+                    </p>
+                  </div>
+                ) : expandedId === activity.id ? (() => {
                   const expandedBet = betList.find(obj => obj.id === activity.id);
                   if (!expandedBet) {
                     return (
@@ -369,10 +403,11 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                       </div>
                     </div>
                   );
-                })()}
+                })() : null}
                 </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       {counterBetTarget && currentUid && (
