@@ -18,7 +18,7 @@ interface GameChallengeDmCardProps {
 
 const STATUS_LABEL: Record<GameChallengeStatus, string> = {
   PENDING_ACCEPT: 'Awaiting their accept',
-  ACTIVE: 'Accepted — locks when the game ends',
+  ACTIVE: 'Accepted',
   DECLINED: 'Declined',
   CANCELLED: 'Cancelled',
   EXPIRED: 'Expired — sim ended before accept, or board refreshed',

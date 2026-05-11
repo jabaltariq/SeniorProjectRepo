@@ -27,6 +27,37 @@ import { getGlobalMockNflGames, makeDmThreadId, sendDirectMessage } from '@/serv
 
 const COL = 'gameChallenges';
 const DM_PREFIX = 'GAME_CHALLENGE:';
+/** Rich settlement card in DM threads (parsed by ChatPane). */
+const GC_SETTLE_DM_PREFIX = 'GC_SETTLE:';
+
+export function isGcSettleMessageText(text: string): boolean {
+  return text.trimStart().startsWith(GC_SETTLE_DM_PREFIX);
+}
+
+export function parseGcSettleChallengeIdFromMessage(text: string): string | null {
+  const t = text.trim();
+  if (!t.startsWith(GC_SETTLE_DM_PREFIX)) return null;
+  const id = t.slice(GC_SETTLE_DM_PREFIX.length).trim();
+  return id.length > 0 ? id : null;
+}
+
+async function sendGameChallengeSettleDm(gc: GameChallengeDoc): Promise<void> {
+  try {
+    const threadId = makeDmThreadId(gc.challengerUid, gc.opponentUid);
+    const text = `${GC_SETTLE_DM_PREFIX}${gc.id}`;
+    const res = await sendDirectMessage({
+      threadId,
+      messageId: `gc_settle_${gc.id}`,
+      fromUserId: gc.challengerUid,
+      toUserId: gc.opponentUid,
+      text,
+      createdAtMs: Date.now(),
+    });
+    if (!res.success) console.warn('sendGameChallengeSettleDm failed', res);
+  } catch (e) {
+    console.warn('sendGameChallengeSettleDm', e);
+  }
+}
 
 export type GameChallengeStatus =
   | 'PENDING_ACCEPT'
@@ -197,6 +228,7 @@ export async function reconcileMockGameChallengeIfNeeded(challengeId: string): P
     if (!gc) return;
     if (gc.sportKey !== 'football_nfl_mock' || !gc.eventId.startsWith('mock-')) return;
     if (gc.status !== 'PENDING_ACCEPT' && gc.status !== 'ACTIVE') return;
+    const statusBeforeTxn = gc.status;
 
     const games = await getGlobalMockNflGames();
     const gameId = gc.eventId.startsWith('mock-') ? gc.eventId.slice('mock-'.length) : '';
@@ -251,6 +283,18 @@ export async function reconcileMockGameChallengeIfNeeded(challengeId: string): P
         tx.update(uref, { challengeWins: increment(1) });
       }
     });
+
+    if (statusBeforeTxn === 'ACTIVE') {
+      const post = await getGameChallenge(challengeId);
+      if (
+        post &&
+        (post.status === 'COMPLETED_CHALLENGER' ||
+          post.status === 'COMPLETED_OPPONENT' ||
+          post.status === 'PUSH')
+      ) {
+        await sendGameChallengeSettleDm(post);
+      }
+    }
   } catch (e) {
     console.error('reconcileMockGameChallengeIfNeeded', e);
   }
@@ -417,6 +461,15 @@ export async function settleActiveGameChallengesGlobal(): Promise<void> {
             tx.update(uref, { challengeWins: increment(1) });
           }
         });
+        const post = await getGameChallenge(gc.id);
+        if (
+          post &&
+          (post.status === 'COMPLETED_CHALLENGER' ||
+            post.status === 'COMPLETED_OPPONENT' ||
+            post.status === 'PUSH')
+        ) {
+          void sendGameChallengeSettleDm(post);
+        }
       } catch {
         /* concurrent settle */
       }

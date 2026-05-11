@@ -184,7 +184,7 @@ export const WinCelebrationModal: React.FC<WinCelebrationModalProps> = ({ payloa
 
         <div className="mt-4 flex items-center gap-1.5 text-[11px] font-semibold text-orange-200/90">
           <Sparkles size={12} />
-          {payload.kind === 'bet' ? 'May the odds be ever in your favor.' : 'Ship the smoke respectfully — or not.'}
+          {payload.kind === 'bet' ? 'May the odds be ever in your favor.' : 'Congratulations on your win!'}
         </div>
       </div>
     </div>

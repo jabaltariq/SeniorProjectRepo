@@ -10,6 +10,8 @@ const H2H = 'headToHead';
 interface CounterBetSettlementDmCardProps {
   h2hId: string;
   currentUserId: string;
+  /** Opens full-screen win/loss recap (from parent / chat host). */
+  onOpenFull?: () => void;
 }
 
 function outcomeForViewer(
@@ -33,7 +35,11 @@ function outcomeForViewer(
 /**
  * Rich DM bubble after a counter-bet settles — gold for your win, bronze/red for a loss, actions to run it back.
  */
-export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProps> = ({ h2hId, currentUserId }) => {
+export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProps> = ({
+  h2hId,
+  currentUserId,
+  onOpenFull,
+}) => {
   const navigate = useNavigate();
   const [status, setStatus] = useState<HeadToHeadStatus | null>(null);
   const [marketTitle, setMarketTitle] = useState('');
@@ -152,6 +158,19 @@ export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProp
 
   return (
     <div className={`rounded-2xl border px-3.5 py-3.5 text-left ${shell}`}>
+      <div
+        role={onOpenFull ? 'button' : undefined}
+        tabIndex={onOpenFull ? 0 : undefined}
+        className={onOpenFull ? 'cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50' : undefined}
+        onClick={() => onOpenFull?.()}
+        onKeyDown={(e) => {
+          if (!onOpenFull) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpenFull();
+          }
+        }}
+      >
       <div className="flex items-start gap-2">
         {viewer === 'win' ? (
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-400/20 text-amber-200 ring-1 ring-amber-300/40">
@@ -193,12 +212,19 @@ export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProp
           <p className="mt-1 text-[11px] font-semibold text-slate-400">
             Escrow pot <span className="text-slate-200">${totalEscrow.toFixed(2)}</span>
           </p>
+          {onOpenFull ? (
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Tap for full-screen recap</p>
+          ) : null}
         </div>
+      </div>
       </div>
 
       <button
         type="button"
-        onClick={() => setShowDetails((v) => !v)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setShowDetails((v) => !v);
+        }}
         className="mt-3 flex w-full items-center justify-center gap-1 rounded-lg border border-slate-600/60 bg-slate-950/40 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-300 hover:bg-slate-800/60"
       >
         {showDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -233,11 +259,12 @@ export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProp
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <button
             type="button"
-            onClick={() =>
+            onClick={(e) => {
+              e.stopPropagation();
               navigate(`/profile/${opponentUid}`, {
                 state: { openGameChallenge: true },
-              })
-            }
+              });
+            }}
             className="flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 py-2 text-[11px] font-black uppercase tracking-wide text-amber-100 hover:bg-amber-500/20"
           >
             <Trophy size={14} />
@@ -245,11 +272,12 @@ export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProp
           </button>
           <button
             type="button"
-            onClick={() =>
+            onClick={(e) => {
+              e.stopPropagation();
               navigate(`/profile/${opponentUid}`, {
                 state: { openCounter: true },
-              })
-            }
+              });
+            }}
             className="flex items-center justify-center gap-1.5 rounded-xl border border-red-500/40 bg-red-500/10 py-2 text-[11px] font-black uppercase tracking-wide text-red-100 hover:bg-red-500/20"
           >
             <Swords size={14} />

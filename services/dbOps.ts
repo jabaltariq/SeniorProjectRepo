@@ -1956,6 +1956,8 @@ async function buildCommunityActivity(
             action:    isParlay ? "placed a parlay on" : "placed a bet on",
             target:    String(data["marketTitle"] ?? ""),
             timestamp: formatActivityTimestamp(placedAtDate),
+            sortKey:   placedAtDate.getTime(),
+            activityKind: "bet",
         });
     }
 

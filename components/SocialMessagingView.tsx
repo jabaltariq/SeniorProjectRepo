@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import type { Bet, Friend, SocialActivity } from '../models';
 import { Eye, Swords, Search, UserPlus2, UserPlus } from 'lucide-react';
 import { ChatPane, type ChatMessage } from './chat/ChatPane';
+import { PeerSettleDetailModal, type PeerSettleKind } from './PeerSettleDetailModal';
 import { UserAvatar } from './UserAvatar';
 import { ANONYMOUS_PROFILE_AVATAR_PATH, defaultAvatarForUid } from '@/models/defaultProfileAvatars';
 import {
@@ -47,6 +48,7 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [privacy, togglePrivacy] = useState(userPrivacy);
+  const [peerSettleOpen, setPeerSettleOpen] = useState<{ kind: PeerSettleKind; id: string } | null>(null);
 
   const location = useLocation();
 
@@ -552,7 +554,7 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
 
             <div className="glass-card rounded-2xl overflow-hidden border-slate-800/80 bg-slate-950/30">
               <ChatPane
-                currentUserId={currentUid}
+                currentUserId={currentUid!}
                 currentUserName={currentUserName}
                 otherUser={activeFriend}
                 messages={activeThreadMessages}
@@ -562,6 +564,7 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                 onDeleteMessage={handleDeleteMessage}
                 onOpenProfile={(userId) => navigate(`/profile/${userId}`)}
                 onClose={() => setActiveChatUserId(null)}
+                onPeerSettleOpen={(p) => setPeerSettleOpen(p)}
               />
             </div>
           </>
@@ -588,25 +591,43 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
         <div className="space-y-4 max-h-[72vh] overflow-y-auto custom-scrollbar pr-1">
           {visibleActivities?.map((activity) => {
                 const expandedBet = expandedBetForActivity(activity);
+                const isPeer =
+                  activity.activityKind === 'peer_counter' || activity.activityKind === 'peer_challenge';
                 const placedAt =
                   expandedBet?.placedAt instanceof Date
                     ? expandedBet.placedAt
                     : expandedBet
                       ? new Date(expandedBet.placedAt as unknown as string)
                       : null;
+                const peerAvatarSrc =
+                  activity.peerUserAvatarUrl ??
+                  (activity.peerUserId && activity.peerUserName
+                    ? `/bethub/${defaultAvatarForUid(activity.peerUserId, activity.peerUserName)}`
+                    : undefined);
 
             return (
               <div
                 key={activity.id}
                 className="glass-card rounded-2xl p-4 flex gap-4 border-slate-800 hover:bg-slate-800/20 transition-all"
               >
-                <UserAvatar
-                  initials={activity.userAvatar}
-                  imageUrl={activityAvatarUrl(activity)}
-                  alt={`${activity.userName}'s avatar`}
-                  className="w-10 h-10 rounded-xl flex-shrink-0"
-                  textClassName="text-slate-400"
-                />
+                <div className="relative h-10 w-10 flex-shrink-0">
+                  <UserAvatar
+                    initials={activity.userAvatar}
+                    imageUrl={activityAvatarUrl(activity)}
+                    alt={`${activity.userName}'s avatar`}
+                    className="h-10 w-10 rounded-xl"
+                    textClassName="text-slate-400"
+                  />
+                  {activity.peerUserId ? (
+                    <UserAvatar
+                      initials={activity.peerUserAvatar ?? '??'}
+                      imageUrl={peerAvatarSrc}
+                      alt={`${activity.peerUserName ?? 'Opponent'}'s avatar`}
+                      className="absolute -bottom-1 -right-2 h-7 w-7 rounded-lg border-2 border-slate-900"
+                      textClassName="text-[9px] text-violet-200"
+                    />
+                  ) : null}
+                </div>
                 <div className="flex-1">
                   <div className="flex justify-between items-start gap-3">
                     <p className="text-sm min-w-0">
@@ -618,6 +639,18 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                       </NavLink>{' '}
                       <span className="text-slate-400">{activity.action}</span>{' '}
                       <span className="font-bold text-blue-400" title={activity.target}>{truncateTarget(activity.target)}</span>
+                      {activity.peerUserId ? (
+                        <>
+                          {' '}
+                          <span className="text-slate-500">vs</span>{' '}
+                          <NavLink
+                            to={`/profile/${activity.peerUserId}`}
+                            className="font-bold text-amber-200/95 hover:text-amber-100 transition-colors"
+                          >
+                            {activity.peerUserName ?? 'Opponent'}
+                          </NavLink>
+                        </>
+                      ) : null}
                     </p>
                     <span className="text-[10px] text-slate-600 font-bold uppercase shrink-0">
                       {activity.timestamp}
@@ -625,13 +658,23 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toggleDetails(activity.id)}
-                      className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter"
-                    >
-                      <Eye size={12} /> View Bet
-                    </button>
+                    {!isPeer ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleDetails(activity.id)}
+                        className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter"
+                      >
+                        <Eye size={12} /> View Bet
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => toggleDetails(activity.id)}
+                        className="text-[10px] font-bold text-slate-500 hover:text-slate-300 flex items-center gap-1 uppercase tracking-tighter"
+                      >
+                        <Eye size={12} /> Details
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -640,9 +683,28 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                     >
                       <Swords size={12} /> Message
                     </button>
+                    {activity.peerUserId ? (
+                      <button
+                        type="button"
+                        onClick={() => setActiveChatUserId(activity.peerUserId)}
+                        className="text-[10px] font-bold text-amber-400/90 hover:text-amber-300 flex items-center gap-1 uppercase tracking-tighter"
+                      >
+                        <UserPlus size={12} /> Opponent
+                      </button>
+                    ) : null}
                   </div>
 
-                  {expandedId === activity.id && expandedBet ? (
+                  {expandedId === activity.id && isPeer ? (
+                    <div className="mt-3 p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10 text-sm text-slate-300">
+                      <p className="font-semibold text-slate-200">
+                        {activity.activityKind === 'peer_counter' ? 'Head-to-head counter' : 'Game challenge'}
+                      </p>
+                      <p className="mt-2 text-slate-400">
+                        {activity.userName} {activity.action}{' '}
+                        <span className="text-slate-200">{truncateTarget(activity.target, 120)}</span>
+                      </p>
+                    </div>
+                  ) : expandedId === activity.id && expandedBet ? (
                     <div className="mt-3 p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10">
                       <div className="text-sm">
                         <span className="font-bold text-slate-100">Stake: </span>
@@ -663,7 +725,7 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                         </span>
                       </div>
                     </div>
-                  ) : expandedId === activity.id && !expandedBet ? (
+                  ) : expandedId === activity.id && !expandedBet && !isPeer ? (
                     <div className="mt-3 p-4 rounded-2xl bg-slate-500/5 border border-slate-500/10 text-sm text-slate-400">
                       Bet details unavailable.
                     </div>
@@ -675,6 +737,15 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
           </div>
       </div>
 
+      {currentUid && peerSettleOpen ? (
+        <PeerSettleDetailModal
+          open
+          kind={peerSettleOpen.kind}
+          docId={peerSettleOpen.id}
+          currentUserId={currentUid}
+          onClose={() => setPeerSettleOpen(null)}
+        />
+      ) : null}
     </div>
   );
 };

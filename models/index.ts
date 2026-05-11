@@ -80,6 +80,9 @@ export interface LeaderboardEntry {
   isCurrentUser?: boolean;
 }
 
+/** `bet` = legacy slip row; peer rows come from head-to-head or game-challenge feeds. */
+export type SocialActivityKind = 'bet' | 'peer_counter' | 'peer_challenge';
+
 export interface SocialActivity {
   id: string;
   userId: string;
@@ -90,6 +93,16 @@ export interface SocialActivity {
   action: string;
   target: string;
   timestamp: string;
+  /** Merge sort with peer feed (epoch ms). Bet rows set from placedAt. */
+  sortKey?: number;
+  activityKind?: SocialActivityKind;
+  /** Other participant in a counter or challenge row. */
+  peerUserId?: string;
+  peerUserName?: string;
+  peerUserAvatar?: string;
+  peerUserAvatarUrl?: string;
+  peerH2hId?: string;
+  peerChallengeId?: string;
 }
 
 export interface Friend {
