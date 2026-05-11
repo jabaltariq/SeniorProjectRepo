@@ -2,28 +2,10 @@ import { useState, useCallback, useRef, useEffect, useReducer, useMemo } from 'r
 import type { Market } from '../models';
 import { fetchMarketsForSportTab } from '../services/oddsApiService';
 import { SPORT_TABS } from '../models/constants';
+import { marketSearchHaystack, queryMatchesHaystack } from '@/lib/marketSearch';
 
 /** Cap deduped events kept for instant search (memory + stale data tradeoff). */
 const MAX_MARKET_SEARCH_CACHE = 1200;
-
-/** Text used for substring search (teams often appear only on spread/h2h option labels). */
-function marketSearchHaystack(m: Market): string {
-  const parts = [
-    m.title,
-    m.subtitle,
-    m.category,
-    m.sport_key ?? '',
-    ...m.options.map((o) => o.label),
-  ];
-  return parts.join(' ').toLowerCase().replace(/@/g, ' ');
-}
-
-function queryMatchesHaystack(haystack: string, rawQuery: string): boolean {
-  const q = rawQuery.trim().toLowerCase();
-  if (!q) return true;
-  const tokens = q.split(/\s+/).filter(Boolean);
-  return tokens.every((t) => haystack.includes(t));
-}
 
 function mergeIntoSearchCache(cache: Map<string, Market>, incoming: Market[]) {
   for (const m of incoming) {
@@ -149,8 +131,14 @@ export function useMarketsViewModel() {
     return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
   });
 
+  const allCachedMarkets = useMemo(
+    () => Array.from(marketSearchCacheRef.current.values()),
+    [searchCacheTick, markets],
+  );
+
   return {
     markets: displayMarkets,
+    allCachedMarkets,
     sportFilteredMarkets,
     hasSelectedSport: Boolean(sportFilter),
     loading,

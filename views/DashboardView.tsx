@@ -45,6 +45,8 @@ import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForCha
 import type { MockNflGameState } from "@/services/dbOps.ts";
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
+import { buildMockNflMarketFromGameState } from '@/lib/mockNflMarketFromState';
+import { reconcileMockGameChallengesAfterUserGameFinal } from '@/services/gameChallenges';
 import { computeParlayRollup } from '@/services/parlayRollup';
 import { formatAmericanOddsLine } from '@/lib/oddsAmericanFormat';
 import {
@@ -192,6 +194,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const isLightMode = themeMode === 'light';
   const [promotionsOpen, setPromotionsOpen] = useState(false);
   const [mockNflGames, setMockNflGames] = useState<MockNflGameState[]>([]);
+  const mockNflChallengeMarkets = useMemo(
+    () => mockNflGames.map((g) => buildMockNflMarketFromGameState(g)),
+    [mockNflGames],
+  );
   const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
   const [pendingWinBets, setPendingWinBets] = useState<Bet[]>([]);
   const [activeWinBet, setActiveWinBet] = useState<Bet | null>(null);
@@ -313,6 +319,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       await saveUserMockNflGames(userUid, next);
       if (finalizedGame) {
         await settleUserMockNflGameBets(userUid, finalizedGame);
+        await reconcileMockGameChallengesAfterUserGameFinal(userUid, finalizedGame);
       }
     }
   };
@@ -522,25 +529,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     return { label: time, tone: 'upcoming' as const };
   };
 
-  const mockMarketForGame = (game: MockNflGameState): Market => ({
-    id: `mock-${game.id}`,
-    sport_key: 'football_nfl_mock',
-    title: `${game.awayTeam} @ ${game.homeTeam}`,
-    subtitle: 'NFL',
-    category: 'Football',
-    type: MarketType.SPORTS,
-    startTime: new Date(game.updatedAtMs).toISOString(),
-    status: game.status === 'FINAL' ? 'CLOSED' : 'UPCOMING',
-    options: [
-      { id: `${game.id}-spread-away`, label: `${game.awayTeam} ${normalizeSpreadLine(game.spreadLine)}`, odds: game.spreadAwayOdds ?? game.awayOdds, marketKey: 'spreads' },
-      { id: `${game.id}-spread-home`, label: `${game.homeTeam} ${normalizeSpreadLine(-game.spreadLine)}`, odds: game.spreadHomeOdds ?? game.homeOdds, marketKey: 'spreads' },
-      { id: `${game.id}-total-over`, label: `Over ${game.totalLine.toFixed(1)}`, odds: game.totalOverOdds, marketKey: 'totals' },
-      { id: `${game.id}-total-under`, label: `Under ${game.totalLine.toFixed(1)}`, odds: game.totalUnderOdds, marketKey: 'totals' },
-      { id: `${game.id}-ml-away`, label: game.awayTeam, odds: game.awayOdds, marketKey: 'h2h' },
-      { id: `${game.id}-ml-home`, label: game.homeTeam, odds: game.homeOdds, marketKey: 'h2h' },
-    ],
-  });
-
   const isMockOptionSelected = (gameId: string, optionId: string) =>
     parlaySelections.some((sel) => sel.market.id === `mock-${gameId}` && sel.option.id === optionId);
 
@@ -730,6 +718,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
             currentUserDisplayName={userName}
             markets={markets}
+            nflMockChallengeMarkets={mockNflChallengeMarkets}
             themeMode={themeMode}
             themeSaving={themeSaving}
             onThemeModeChange={onThemeModeChange}
@@ -1251,7 +1240,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                               {mockNflGames.map((game) => (
                                 <div key={game.id} className="grid grid-cols-[minmax(230px,1.2fr)_repeat(3,minmax(120px,0.62fr))] items-stretch gap-2 rounded-lg border border-amber-400/25 bg-slate-900/70 p-2.5">
                                   {(() => {
-                                    const mockMarket = mockMarketForGame(game);
+                                    const mockMarket = buildMockNflMarketFromGameState(game);
                                     const spreadAway = mockMarket.options[0];
                                     const spreadHome = mockMarket.options[1];
                                     const totalOver = mockMarket.options[2];

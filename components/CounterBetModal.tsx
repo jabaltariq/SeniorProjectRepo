@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Swords, X, AlertCircle, Wallet, Target } from 'lucide-react';
 import type { Bet } from '../models';
-import type { ProposeHeadToHeadResult } from '../services/dbOps';
+import { notifyHeadToHeadProposalDm, type ProposeHeadToHeadResult } from '../services/dbOps';
 
 interface CounterBetModalProps {
   /** The bet being faded (someone else's pending bet). */
@@ -18,6 +18,8 @@ interface CounterBetModalProps {
   onAfterSuccess?: () => void;
   /** Stacking order for nested modals (default z-50). */
   overlayZIndexClass?: string;
+  /** When set, posts optional note + counter invite into the DM thread after a successful proposal. */
+  counterDm?: { messagingFromUserId: string; opponentUserId: string };
 }
 
 /**
@@ -37,9 +39,11 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
   onClose,
   onAfterSuccess,
   overlayZIndexClass = 'z-50',
+  counterDm,
 }) => {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [dmNote, setDmNote] = useState('');
 
   // Odds-matched math. Mirror the server-side computeChallengerStake so the
   // user sees the exact value that will be debited.
@@ -55,6 +59,14 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
     try {
       const result = await onConfirm(bet.id);
       if (result.success) {
+        if (counterDm?.messagingFromUserId && counterDm.opponentUserId && result.h2hId) {
+          await notifyHeadToHeadProposalDm({
+            challengerUid: counterDm.messagingFromUserId,
+            opponentUid: counterDm.opponentUserId,
+            h2hId: result.h2hId,
+            optionalNote: dmNote.trim() || undefined,
+          });
+        }
         if (onAfterSuccess) onAfterSuccess();
         else onClose();
       } else {
@@ -112,6 +124,23 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
             </div>
           </div>
 
+          {counterDm && (
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500" htmlFor="counter-dm-note">
+                Optional message (sent first in chat)
+              </label>
+              <textarea
+                id="counter-dm-note"
+                value={dmNote}
+                onChange={(e) => setDmNote(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder="Trash talk or context…"
+                className="mt-1 w-full resize-none rounded-xl border border-slate-700 bg-slate-950/40 px-3 py-2 text-sm text-slate-100 outline-none focus:border-red-500/40"
+              />
+            </div>
+          )}
+
           {/* The math */}
           <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 space-y-2 text-sm">
             <div className="flex items-center justify-between">
@@ -132,7 +161,9 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
           <p className="text-[11px] text-slate-500 leading-relaxed">
             Stakes are odds-matched. {ownerName} must <span className="text-slate-300">accept</span>
             {' '}before the H2H is locked in. If they decline, you&apos;re refunded in full.
-            No fades after kickoff.
+            {(bet.marketId ?? '').startsWith('mock-')
+              ? ' Simulated mock games ignore synthetic kickoff times for fades.'
+              : ' No fades after kickoff on real-odds events.'}
           </p>
 
           {/* Errors */}

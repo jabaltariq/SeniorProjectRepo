@@ -136,7 +136,7 @@ export const CounterOpponentModal: React.FC<CounterOpponentModalProps> = ({
                 {opponentDisplayName}
               </h2>
               <p className="text-[11px] leading-snug text-slate-400">
-                Pick one of their pending slips to fade — same head-to-head counter as on their profile.
+                Choose one of their pending slips to counter.
               </p>
             </div>
           </div>
@@ -255,6 +255,11 @@ export const CounterOpponentModal: React.FC<CounterOpponentModalProps> = ({
           ownerName={opponentDisplayName}
           balance={balance}
           overlayZIndexClass="z-[65]"
+          counterDm={
+            currentUserId && opponentUserId
+              ? { messagingFromUserId: currentUserId, opponentUserId }
+              : undefined
+          }
           onConfirm={(originalBetId) => proposeHeadToHead(originalBetId, currentUserId)}
           onAfterSuccess={onClose}
           onClose={() => setConfirmBet(null)}

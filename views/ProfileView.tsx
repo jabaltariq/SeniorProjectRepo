@@ -45,6 +45,8 @@ interface ProfileViewProps {
   currentUserDisplayName?: string;
   /** Markets list for picking a game to challenge someone on. */
   markets?: Market[];
+  /** Live NFL sim board (three games) for profile game challenges. */
+  nflMockChallengeMarkets?: Market[];
   themeMode: UserThemeMode;
   themeSaving: boolean;
   onThemeModeChange: (mode: UserThemeMode) => void;
@@ -58,6 +60,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   currentUserId,
   currentUserDisplayName,
   markets = [],
+  nflMockChallengeMarkets = [],
   themeMode,
   themeSaving,
   onThemeModeChange,
@@ -767,7 +770,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         <GameChallengeModal
           isOpen
           onClose={() => setShowGameChallengeModal(false)}
-          markets={markets}
+          mockNflMarkets={nflMockChallengeMarkets}
           opponentUserId={profileUserId}
           opponentDisplayName={displayName}
           opponentAvatarUrl={profileAvatarUrl}
@@ -782,6 +785,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           bet={counterBetTarget}
           ownerName={displayName}
           balance={balance}
+          counterDm={
+            profileUserId && currentUserId !== profileUserId
+              ? { messagingFromUserId: currentUserId, opponentUserId: profileUserId }
+              : undefined
+          }
           onConfirm={(originalBetId) => proposeHeadToHead(originalBetId, currentUserId)}
           onClose={() => setCounterBetTarget(null)}
         />

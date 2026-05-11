@@ -22,7 +22,8 @@ import type { Market, MarketOption } from '@/models';
 import { gradeOddsApiSelection } from '@/services/apiOddsGrading';
 import { fetchOddsApiScores } from '@/services/oddsApiScores';
 import type { OddsApiScoreEvent } from '@/services/oddsApiScores';
-import { sendDirectMessage } from '@/services/dbOps';
+import { gradeMockNflPickAfterFinal } from '@/lib/mockNflChallengeGrade';
+import { makeDmThreadId, sendDirectMessage, getUserMockNflGames } from '@/services/dbOps';
 
 const COL = 'gameChallenges';
 const DM_PREFIX = 'GAME_CHALLENGE:';
@@ -32,6 +33,7 @@ export type GameChallengeStatus =
   | 'ACTIVE'
   | 'DECLINED'
   | 'CANCELLED'
+  | 'EXPIRED'
   | 'COMPLETED_CHALLENGER'
   | 'COMPLETED_OPPONENT'
   | 'PUSH';
@@ -55,15 +57,12 @@ export interface GameChallengeDoc {
   settledAt?: Timestamp;
 }
 
-function dmThreadId(a: string, b: string): string {
-  const [x, y] = [a, b].sort((u, v) => u.localeCompare(v));
-  return `dm:${x}:${y}`;
-}
-
-function pickH2hPair(market: Market): { a: MarketOption; b: MarketOption } | null {
-  const h2h = market.options.filter((o) => (o.marketKey ?? 'h2h') === 'h2h');
-  if (h2h.length !== 2) return null;
-  return { a: h2h[0], b: h2h[1] };
+/** Opposite side for spreads / totals / ML when exactly two options share the same marketKey. */
+export function opposingOptionForMarket(market: Market, chosen: MarketOption): MarketOption | null {
+  const key = chosen.marketKey ?? 'h2h';
+  const siblings = market.options.filter((o) => (o.marketKey ?? 'h2h') === key);
+  if (siblings.length !== 2) return null;
+  return siblings.find((o) => o.id !== chosen.id) ?? null;
 }
 
 export function isGameChallengeMessageText(text: string): boolean {
@@ -106,8 +105,8 @@ export type CreateGameChallengeResult =
   | { success: false; error: string };
 
 /**
- * Creates a pending game challenge and posts a machine-readable line into the DM thread.
- * Only two-option h2h moneylines are supported.
+ * Creates a pending game challenge and posts into the DM thread (optional note + invite line).
+ * Supports any market line type with exactly two options on the same marketKey (ML, spread, total).
  */
 export async function createGameChallengeAndNotify(input: {
   challengerUid: string;
@@ -116,22 +115,22 @@ export async function createGameChallengeAndNotify(input: {
   opponentName: string;
   market: Market;
   chosenOption: MarketOption;
+  /** Optional message sent first in the thread (same as counter-bet flow). */
+  optionalDmNote?: string;
 }): Promise<CreateGameChallengeResult> {
-  const { challengerUid, opponentUid, challengerName, opponentName, market, chosenOption } = input;
+  const { challengerUid, opponentUid, challengerName, opponentName, market, chosenOption, optionalDmNote } = input;
   if (!challengerUid || !opponentUid || challengerUid === opponentUid) {
     return { success: false, error: 'Invalid users' };
   }
-  const pair = pickH2hPair(market);
-  if (!pair) {
-    return { success: false, error: 'Pick a two-team moneyline (h2h) market only.' };
-  }
-  const { a, b } = pair;
-  const other = a.id === chosenOption.id ? b : b.id === chosenOption.id ? a : null;
+  const other = opposingOptionForMarket(market, chosenOption);
   if (!other) {
-    return { success: false, error: 'Pick one side of that matchup.' };
+    return { success: false, error: 'Pick a line that has exactly two sides (moneyline, spread, or total).' };
   }
   if (market.status === 'CLOSED') {
     return { success: false, error: 'That market is closed.' };
+  }
+  if (market.sport_key !== 'football_nfl_mock') {
+    return { success: false, error: 'Challenges use your NFL sim board only (the three rotating games).' };
   }
 
   try {
@@ -151,15 +150,30 @@ export async function createGameChallengeAndNotify(input: {
       createdAt: Timestamp.now(),
     });
 
-    const threadId = dmThreadId(challengerUid, opponentUid);
-    const messageId = `gc_${ref.id}_${Date.now()}`;
+    const threadId = makeDmThreadId(challengerUid, opponentUid);
+    const base = Date.now();
+    let seq = 0;
+    const note = (optionalDmNote ?? '').trim();
+    if (note.length > 0) {
+      const noteRes = await sendDirectMessage({
+        threadId,
+        messageId: `gc_note_${ref.id}_${base}_${seq++}`,
+        fromUserId: challengerUid,
+        toUserId: opponentUid,
+        text: note,
+        createdAtMs: base,
+      });
+      if (!noteRes.success) {
+        return { success: false, error: 'Could not send message' };
+      }
+    }
     const dm = await sendDirectMessage({
       threadId,
-      messageId,
+      messageId: `gc_${ref.id}_${base}_${seq++}`,
       fromUserId: challengerUid,
       toUserId: opponentUid,
       text: `${DM_PREFIX}${ref.id}`,
-      createdAtMs: Date.now(),
+      createdAtMs: base + 1,
     });
     if (!dm.success) {
       return { success: false, error: 'Could not send DM' };
@@ -173,11 +187,106 @@ export async function createGameChallengeAndNotify(input: {
 
 export type MutateGameChallengeResult = { success: true } | { success: false; error: string };
 
+/**
+ * When the challenger's mock NFL game is FINAL: pending invites become EXPIRED;
+ * active challenges settle to COMPLETED_* / PUSH (same grading as mock bet settlement).
+ */
+export async function reconcileMockGameChallengeIfNeeded(challengeId: string): Promise<void> {
+  try {
+    const gc = await getGameChallenge(challengeId);
+    if (!gc) return;
+    if (gc.sportKey !== 'football_nfl_mock' || !gc.eventId.startsWith('mock-')) return;
+    if (gc.status !== 'PENDING_ACCEPT' && gc.status !== 'ACTIVE') return;
+
+    const games = await getUserMockNflGames(gc.challengerUid);
+    const gameId = gc.eventId.startsWith('mock-') ? gc.eventId.slice('mock-'.length) : '';
+    const game = games.find((g) => g.id === gameId);
+
+    if (!game) {
+      if (gc.status === 'PENDING_ACCEPT' || gc.status === 'ACTIVE') {
+        await runTransaction(db, async (tx) => {
+          const r = doc(db, COL, challengeId);
+          const s = await tx.get(r);
+          if (!s.exists()) return;
+          const st = String(s.data().status);
+          if (st !== 'PENDING_ACCEPT' && st !== 'ACTIVE') return;
+          tx.update(r, { status: 'EXPIRED' });
+        });
+      }
+      return;
+    }
+
+    if (game.status !== 'FINAL' || game.awayScore == null || game.homeScore == null) return;
+
+    const gCh = gradeMockNflPickAfterFinal(game, gc.challengerPickLabel);
+    const gOp = gradeMockNflPickAfterFinal(game, gc.opponentPickLabel);
+    if (gCh === null || gOp === null || gCh === 'VOID' || gOp === 'VOID') return;
+
+    await runTransaction(db, async (tx) => {
+      const r = doc(db, COL, challengeId);
+      const s = await tx.get(r);
+      if (!s.exists()) return;
+      const st = String(s.data().status) as GameChallengeStatus;
+      if (st === 'PENDING_ACCEPT') {
+        tx.update(r, { status: 'EXPIRED' });
+        return;
+      }
+      if (st !== 'ACTIVE') return;
+
+      let next: GameChallengeStatus = 'PUSH';
+      let winnerUid: string | null = null;
+      if (gCh === 'WON' && gOp === 'LOST') {
+        next = 'COMPLETED_CHALLENGER';
+        winnerUid = gc.challengerUid;
+      } else if (gCh === 'LOST' && gOp === 'WON') {
+        next = 'COMPLETED_OPPONENT';
+        winnerUid = gc.opponentUid;
+      } else {
+        next = 'PUSH';
+      }
+
+      tx.update(r, { status: next, settledAt: Timestamp.now() });
+      if (winnerUid) {
+        const uref = doc(db, 'userInfo', winnerUid);
+        tx.update(uref, { challengeWins: increment(1) });
+      }
+    });
+  } catch (e) {
+    console.error('reconcileMockGameChallengeIfNeeded', e);
+  }
+}
+
+/** After a challenger's mock NFL game goes FINAL, settle any challenges tied to that event. */
+export async function reconcileMockGameChallengesAfterUserGameFinal(
+  challengerUid: string,
+  game: { id: string; status: string },
+): Promise<void> {
+  if (!challengerUid || game.status !== 'FINAL') return;
+  const eventId = `mock-${game.id}`;
+  try {
+    const q = query(collection(db, COL), where('challengerUid', '==', challengerUid), limit(60));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      const ddata = d.data();
+      if (String(ddata.eventId ?? '') !== eventId) continue;
+      if (String(ddata.sportKey ?? '') !== 'football_nfl_mock') continue;
+      await reconcileMockGameChallengeIfNeeded(d.id);
+    }
+  } catch (e) {
+    console.error('reconcileMockGameChallengesAfterUserGameFinal', e);
+  }
+}
+
 export async function acceptGameChallenge(
   challengeId: string,
   actingUid: string,
 ): Promise<MutateGameChallengeResult> {
   try {
+    await reconcileMockGameChallengeIfNeeded(challengeId);
+    const fresh = await getGameChallenge(challengeId);
+    if (fresh?.status === 'EXPIRED') {
+      return { success: false, error: 'This invite expired — the sim game already ended.' };
+    }
     await runTransaction(db, async (tx) => {
       const r = doc(db, COL, challengeId);
       const snap = await tx.get(r);

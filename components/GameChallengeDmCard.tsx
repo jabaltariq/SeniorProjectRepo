@@ -5,6 +5,7 @@ import {
   acceptGameChallenge,
   cancelGameChallenge,
   declineGameChallenge,
+  reconcileMockGameChallengeIfNeeded,
   type GameChallengeStatus,
 } from '@/services/gameChallenges';
 
@@ -20,6 +21,7 @@ const STATUS_LABEL: Record<GameChallengeStatus, string> = {
   ACTIVE: 'Accepted — locks when the game ends',
   DECLINED: 'Declined',
   CANCELLED: 'Cancelled',
+  EXPIRED: 'Expired — sim ended before accept, or board refreshed',
   COMPLETED_CHALLENGER: 'Challenger won',
   COMPLETED_OPPONENT: 'Opponent won',
   PUSH: 'Push — no winner',
@@ -53,6 +55,7 @@ export const GameChallengeDmCard: React.FC<GameChallengeDmCardProps> = ({ challe
       setOpponentPick(String(d.opponentPickLabel ?? ''));
       setChallengerUid(String(d.challengerUid ?? ''));
       setOpponentUid(String(d.opponentUid ?? ''));
+      void reconcileMockGameChallengeIfNeeded(challengeId);
     });
     return () => unsub();
   }, [challengeId]);

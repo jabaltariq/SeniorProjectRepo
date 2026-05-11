@@ -3,7 +3,12 @@ import type { Friend } from '../../models';
 import { Send, Trash2, X } from 'lucide-react';
 import { UserAvatar } from '../UserAvatar';
 import { GameChallengeDmCard } from '../GameChallengeDmCard';
+import { CounterBetDmCard } from '../CounterBetDmCard';
 import { isGameChallengeMessageText, parseGameChallengeIdFromMessage } from '@/services/gameChallenges';
+import {
+  isCounterBetInviteMessageText,
+  parseCounterBetInviteIdFromMessage,
+} from '@/services/dbOps';
 
 export type ChatMessage = {
   id: string;
@@ -132,6 +137,9 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             {messages.map((m) => {
               const isSelf = m.fromUserId === currentUserId;
               const gcId = isGameChallengeMessageText(m.text) ? parseGameChallengeIdFromMessage(m.text) : null;
+              const counterH2hId = isCounterBetInviteMessageText(m.text)
+                ? parseCounterBetInviteIdFromMessage(m.text)
+                : null;
               return (
                 <div
                   key={m.id}
@@ -160,10 +168,12 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                         <div className="flex items-start justify-between gap-2">
                           {gcId ? (
                             <GameChallengeDmCard challengeId={gcId} currentUserId={currentUserId} />
+                          ) : counterH2hId ? (
+                            <CounterBetDmCard h2hId={counterH2hId} currentUserId={currentUserId} />
                           ) : (
                             <p className="text-sm chat-bubble-text whitespace-pre-wrap text-slate-100">{m.text}</p>
                           )}
-                          {isSelf && onDeleteMessage && !gcId ? (
+                          {isSelf && onDeleteMessage && !gcId && !counterH2hId ? (
                             <button
                               type="button"
                               onClick={() => onDeleteMessage(m.id)}

@@ -2448,6 +2448,61 @@ export async function sendDirectMessage(input: SendDirectMessageInput): Promise<
     }
 }
 
+const COUNTER_BET_DM_PREFIX = "COUNTER_BET:";
+
+export function makeDmThreadId(uidA: string, uidB: string): string {
+    const [a, b] = [uidA, uidB].sort((x, y) => x.localeCompare(y));
+    return `dm:${a}:${b}`;
+}
+
+export function isCounterBetInviteMessageText(text: string): boolean {
+    return text.trimStart().startsWith(COUNTER_BET_DM_PREFIX);
+}
+
+export function parseCounterBetInviteIdFromMessage(text: string): string | null {
+    const t = text.trim();
+    if (!t.startsWith(COUNTER_BET_DM_PREFIX)) return null;
+    const id = t.slice(COUNTER_BET_DM_PREFIX.length).trim();
+    return id.length > 0 ? id : null;
+}
+
+/**
+ * Posts an optional personal note then a machine-readable counter-bet invite in the DM thread.
+ */
+export async function notifyHeadToHeadProposalDm(input: {
+    challengerUid: string;
+    opponentUid: string;
+    h2hId: string;
+    optionalNote?: string;
+}): Promise<void> {
+    const { challengerUid, opponentUid, h2hId, optionalNote } = input;
+    if (!challengerUid || !opponentUid || !h2hId) return;
+    const threadId = makeDmThreadId(challengerUid, opponentUid);
+    const base = Date.now();
+    let seq = 0;
+    const note = (optionalNote ?? "").trim();
+    if (note.length > 0) {
+        const r = await sendDirectMessage({
+            threadId,
+            messageId: `h2h_note_${h2hId}_${base}_${seq++}`,
+            fromUserId: challengerUid,
+            toUserId: opponentUid,
+            text: note,
+            createdAtMs: base,
+        });
+        if (!r.success) console.warn("notifyHeadToHeadProposalDm note failed", r);
+    }
+    const inv = await sendDirectMessage({
+        threadId,
+        messageId: `h2h_inv_${h2hId}_${base}_${seq++}`,
+        fromUserId: challengerUid,
+        toUserId: opponentUid,
+        text: `${COUNTER_BET_DM_PREFIX}${h2hId}`,
+        createdAtMs: base + 1,
+    });
+    if (!inv.success) console.warn("notifyHeadToHeadProposalDm invite failed", inv);
+}
+
 /**
  * Deletes a message only if the acting user is the sender.
  * NOTE: Client-side guard only; Firestore security rules should enforce too.
@@ -2664,9 +2719,11 @@ export async function proposeHeadToHead(
             // Hard lock: no fades after kickoff. Bets written before this field
             // existed (legacy data) won't have eventStartsAt — those skip the
             // lock and rely on the cron's existing settlement gating instead.
+            const slipMarketId = String(betData.marketId ?? "");
+            const mockSlip = slipMarketId.startsWith("mock-");
             const eventStartsTs = betData.eventStartsAt as Timestamp | undefined;
             const eventStartsDate = eventStartsTs?.toDate?.();
-            if (eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
+            if (!mockSlip && eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
                 throw new Error("EVENT_STARTED");
             }
 
@@ -2754,10 +2811,12 @@ export async function acceptHeadToHead(
             if (String(data.originalUserId) !== actingUserId) throw new Error("WRONG_USER");
 
             // Re-check the kickoff lock at accept time (the game may have started
-            // between proposal and acceptance).
+            // between proposal and acceptance). Mock NFL slips skip this (synthetic times).
+            const h2hMarketId = String(data.marketId ?? "");
+            const mockH2h = h2hMarketId.startsWith("mock-");
             const eventStartsTs = data.eventStartsAt as Timestamp | undefined;
             const eventStartsDate = eventStartsTs?.toDate?.();
-            if (eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
+            if (!mockH2h && eventStartsDate && eventStartsDate.getTime() <= Date.now()) {
                 throw new Error("EVENT_STARTED");
             }
 

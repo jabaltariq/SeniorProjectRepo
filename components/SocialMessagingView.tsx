@@ -262,6 +262,40 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
     return m;
   }, [friendsForRail, currentUid]);
 
+  const isActiveChatNonFriend = useMemo(
+    () =>
+      Boolean(activeChatUserId && !friendsForRail.some((f) => f.id === activeChatUserId)),
+    [activeChatUserId, friendsForRail],
+  );
+
+  const pinnedSearchUser: UserSearchResult | null = useMemo(() => {
+    if (!isActiveChatNonFriend || !activeChatUserId || !activeFriend || activeFriend.name === 'Unknown') return null;
+    return {
+      uid: activeChatUserId,
+      name: activeFriend.name,
+      privacyEnabled: activeFriend.privacyEnabled,
+      avatarUrl: activeFriend.avatarUrl,
+      profileBackgroundUrl: activeFriend.profileBackgroundUrl,
+    };
+  }, [isActiveChatNonFriend, activeChatUserId, activeFriend]);
+
+  const combinedSearchRows = useMemo(() => {
+    const out: UserSearchResult[] = [];
+    if (pinnedSearchUser) out.push(pinnedSearchUser);
+    for (const r of searchResults) {
+      if (pinnedSearchUser && r.uid === pinnedSearchUser.uid) continue;
+      out.push(r);
+    }
+    return out;
+  }, [pinnedSearchUser, searchResults]);
+
+  useEffect(() => {
+    if (!isActiveChatNonFriend || !activeChatUserId) return;
+    const name = activeFriend?.name?.trim();
+    if (!name || name === 'Unknown') return;
+    onSearchChange(name);
+  }, [isActiveChatNonFriend, activeChatUserId, activeFriend?.name]);
+
   useEffect(() => {
     togglePrivacy(userPrivacy);
   }, [userPrivacy]);
@@ -435,15 +469,18 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
               onChange={(e) => onSearchChange(e.target.value)}
               className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm"
             />
-            {(searchLoading || searchResults.length > 0 || searchQuery.trim().length > 0) && (
+            {(searchLoading ||
+              combinedSearchRows.length > 0 ||
+              searchQuery.trim().length > 0 ||
+              (isActiveChatNonFriend && Boolean(activeFriend?.name && activeFriend.name !== 'Unknown'))) && (
               <div className="mt-2 rounded-xl border border-slate-800 bg-slate-950/80 p-1.5 max-h-56 overflow-y-auto custom-scrollbar">
                 {searchLoading ? (
                   <p className="px-3 py-2 text-xs text-slate-500">Searching…</p>
-                ) : searchResults.length === 0 ? (
+                ) : combinedSearchRows.length === 0 ? (
                   <p className="px-3 py-2 text-xs text-slate-500">No users found.</p>
                 ) : (
                   <div className="space-y-1">
-                    {searchResults.map((u) => {
+                    {combinedSearchRows.map((u) => {
                       const alreadyFriend = friendsForRail.some((f) => f.id === u.uid);
                       const alreadyRequested = requestedUserIds.has(u.uid);
                       return (
