@@ -113,6 +113,29 @@ export interface Challenge {
   status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'COMPLETED';
 }
 
+// ── Global NFL sim board (shared mock games) ─────────────────────
+export type MockNflWinner = 'HOME' | 'AWAY' | null;
+
+export interface MockNflGameState {
+  id: string;
+  week: number;
+  awayTeam: string;
+  homeTeam: string;
+  awayOdds: number;
+  homeOdds: number;
+  spreadAwayOdds: number;
+  spreadHomeOdds: number;
+  totalOverOdds: number;
+  totalUnderOdds: number;
+  spreadLine: number;
+  totalLine: number;
+  status: 'UPCOMING' | 'FINAL';
+  awayScore: number | null;
+  homeScore: number | null;
+  winner: MockNflWinner;
+  updatedAtMs: number;
+}
+
 // ── Head-to-Head (peer-to-peer side wager) ───────────────────────
 //
 // A challenger picks a pending bet placed by another user and proposes to

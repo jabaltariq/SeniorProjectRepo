@@ -23,7 +23,7 @@ import { gradeOddsApiSelection } from '@/services/apiOddsGrading';
 import { fetchOddsApiScores } from '@/services/oddsApiScores';
 import type { OddsApiScoreEvent } from '@/services/oddsApiScores';
 import { gradeMockNflPickAfterFinal } from '@/lib/mockNflChallengeGrade';
-import { makeDmThreadId, sendDirectMessage, getUserMockNflGames } from '@/services/dbOps';
+import { getGlobalMockNflGames, makeDmThreadId, sendDirectMessage } from '@/services/dbOps';
 
 const COL = 'gameChallenges';
 const DM_PREFIX = 'GAME_CHALLENGE:';
@@ -198,7 +198,7 @@ export async function reconcileMockGameChallengeIfNeeded(challengeId: string): P
     if (gc.sportKey !== 'football_nfl_mock' || !gc.eventId.startsWith('mock-')) return;
     if (gc.status !== 'PENDING_ACCEPT' && gc.status !== 'ACTIVE') return;
 
-    const games = await getUserMockNflGames(gc.challengerUid);
+    const games = await getGlobalMockNflGames();
     const gameId = gc.eventId.startsWith('mock-') ? gc.eventId.slice('mock-'.length) : '';
     const game = games.find((g) => g.id === gameId);
 
@@ -256,24 +256,22 @@ export async function reconcileMockGameChallengeIfNeeded(challengeId: string): P
   }
 }
 
-/** After a challenger's mock NFL game goes FINAL, settle any challenges tied to that event. */
-export async function reconcileMockGameChallengesAfterUserGameFinal(
-  challengerUid: string,
-  game: { id: string; status: string },
-): Promise<void> {
-  if (!challengerUid || game.status !== 'FINAL') return;
+/** After the global mock NFL game goes FINAL, settle any challenges on that event. */
+export async function reconcileMockGameChallengesAfterGlobalMockFinal(game: {
+  id: string;
+  status: string;
+}): Promise<void> {
+  if (game.status !== 'FINAL') return;
   const eventId = `mock-${game.id}`;
   try {
-    const q = query(collection(db, COL), where('challengerUid', '==', challengerUid), limit(60));
+    const q = query(collection(db, COL), where('eventId', '==', eventId), limit(40));
     const snap = await getDocs(q);
     for (const d of snap.docs) {
-      const ddata = d.data();
-      if (String(ddata.eventId ?? '') !== eventId) continue;
-      if (String(ddata.sportKey ?? '') !== 'football_nfl_mock') continue;
+      if (String(d.data().sportKey ?? '') !== 'football_nfl_mock') continue;
       await reconcileMockGameChallengeIfNeeded(d.id);
     }
   } catch (e) {
-    console.error('reconcileMockGameChallengesAfterUserGameFinal', e);
+    console.error('reconcileMockGameChallengesAfterGlobalMockFinal', e);
   }
 }
 

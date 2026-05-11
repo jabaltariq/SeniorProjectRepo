@@ -1,4 +1,4 @@
-import type { MockNflGameState } from '@/services/dbOps';
+import type { MockNflGameState } from '@/models';
 
 function normalizeSpreadLine(line: number) {
   return line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1);

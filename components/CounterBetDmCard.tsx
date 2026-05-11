@@ -12,7 +12,7 @@ interface CounterBetDmCardProps {
 }
 
 const STATUS: Record<HeadToHeadStatus, string> = {
-  PENDING_ACCEPT: 'Waiting for them to accept your counter',
+  PENDING_ACCEPT: 'Pending',
   ACCEPTED: 'Accepted',
   DECLINED: 'They declined',
   CANCELLED: 'Withdrawn',

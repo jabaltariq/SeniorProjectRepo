@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Settings,
@@ -70,7 +70,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // so useParams() returns an empty object. Parse the uid out of the pathname
   // ourselves so links like /profile/<uid> from the leaderboard, friends list,
   // and activity feed actually resolve to that user.
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
+  const openCounterFromNav = useRef(false);
+  const openGameChallengeFromNav = useRef(false);
   const routeUserId = (() => {
     const segments = pathname
       .replace(/^\/bethub\/?/, '')
@@ -112,6 +115,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [showCounterModal, setShowCounterModal] = useState(false);
   const [showGameChallengeModal, setShowGameChallengeModal] = useState(false);
   const [challengeBets, setChallengeBets] = useState<Bet[]>([]);
+
+  useEffect(() => {
+    const st = location.state as { openGameChallenge?: boolean; openCounter?: boolean } | null;
+    if (!st?.openGameChallenge && !st?.openCounter) return;
+    if (st.openGameChallenge) openGameChallengeFromNav.current = true;
+    if (st.openCounter) openCounterFromNav.current = true;
+    navigate(pathname, { replace: true, state: {} });
+  }, [location.state, navigate, pathname]);
+
+  useEffect(() => {
+    if (loading || isOwnProfile || !profileUserId) return;
+    if (openCounterFromNav.current) {
+      openCounterFromNav.current = false;
+      setShowCounterModal(true);
+    }
+    if (openGameChallengeFromNav.current) {
+      openGameChallengeFromNav.current = false;
+      setShowGameChallengeModal(true);
+    }
+  }, [loading, isOwnProfile, profileUserId]);
 
   // Counter-Bet (head-to-head) modal target.
   const [counterBetTarget, setCounterBetTarget] = useState<Bet | null>(null);

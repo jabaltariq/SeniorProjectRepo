@@ -40,23 +40,33 @@ import { profileBackgroundForUid } from '@/models/profileBackgrounds';
 import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
-import { DAILY_BONUS_AMOUNT, MOCK_NFL_TEAM_POOL, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
-import { FriendRequest, getBets, getUserMoney, getUserMockNflGames, listenForChange, saveUserMockNflGames, settleUserMockNflGameBets } from "@/services/dbOps.ts";
-import type { MockNflGameState } from "@/services/dbOps.ts";
+import { DAILY_BONUS_AMOUNT, VIEW_ALL_GAMES_VISIBLE_THRESHOLD } from '../models/constants';
+import {
+  FriendRequest,
+  ensureGlobalMockNflBoardSeeded,
+  getBets,
+  getUserMoney,
+  listenForChange,
+  makeDmThreadId,
+  saveGlobalMockNflGames,
+  sendDirectMessage,
+  settleAllUsersForMockNflGame,
+  subscribeToGlobalMockNflGames,
+} from "@/services/dbOps.ts";
+import type { MockNflGameState } from '@/models';
 import {betList, friendsList} from "@/services/authService.ts";
 import type { UserThemeMode } from '@/services/dbOps';
 import { buildMockNflMarketFromGameState } from '@/lib/mockNflMarketFromState';
-import { reconcileMockGameChallengesAfterUserGameFinal } from '@/services/gameChallenges';
+import { reconcileMockGameChallengesAfterGlobalMockFinal } from '@/services/gameChallenges';
 import { computeParlayRollup } from '@/services/parlayRollup';
 import { formatAmericanOddsLine } from '@/lib/oddsAmericanFormat';
+import { createRandomMockNflGameState } from '@/lib/globalMockNflBoard';
 import {
-  mlDecimalsForFavorite,
-  randomSpreadMagnitudeHalf,
-  randomTotalLineHalf,
-  spreadSideDecimals,
-  totalSideDecimals,
-} from '@/lib/mockNflGameGenerator';
-import { WinCelebrationModal } from '../components/WinCelebrationModal';
+  WinCelebrationModal,
+  type WinCelebrationPayload,
+} from '../components/WinCelebrationModal';
+import { collection, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
+import { db } from '@/models/constants.ts';
 
 type DashboardViewType = 'HOME' | 'MARKETS' | 'HISTORY' | 'LEADERBOARD' | 'SOCIAL' | 'PROFILE' | 'HEAD_TO_HEAD' | 'SETTINGS' | 'STORE';
 
@@ -144,6 +154,80 @@ interface DashboardViewProps {
   onThemeModeChange: (mode: UserThemeMode) => void;
 }
 
+const H2H_COL = 'headToHead';
+const GC_COL = 'gameChallenges';
+
+type QueuedCelebration = { key: string; payload: WinCelebrationPayload };
+
+function readStringSetFromLs(storageKey: string): Set<string> {
+  if (typeof localStorage === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeStringSetToLs(storageKey: string, ids: Set<string>) {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(storageKey, JSON.stringify(Array.from(ids)));
+}
+
+function userWonH2h(
+  data: { status?: unknown; originalUserId?: unknown; challengerUserId?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  return (status === 'WON_BY_ORIGINAL' && uid === orig) || (status === 'WON_BY_CHALLENGER' && uid === chall);
+}
+
+function h2hDocToWinPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  const opponent = uid === orig ? chall : orig;
+  return {
+    kind: 'h2h_win',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+    pickLabel: String(data.originalSide ?? ''),
+    totalEscrow: (Number(data.originalStake) || 0) + (Number(data.challengerStake) || 0),
+    originalBetId: String(data.originalBetId ?? ''),
+  };
+}
+
+function userWonGc(
+  data: { status?: unknown; challengerUid?: unknown; opponentUid?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  return (status === 'COMPLETED_CHALLENGER' && uid === chall) || (status === 'COMPLETED_OPPONENT' && uid === opp);
+}
+
+function gcDocToWinPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  if (String(data.status ?? '') === 'COMPLETED_CHALLENGER' && uid === chall) {
+    return {
+      kind: 'gc_win',
+      opponentUid: opp,
+      marketTitle: String(data.marketTitle ?? ''),
+      yourPick: String(data.challengerPickLabel ?? ''),
+    };
+  }
+  return {
+    kind: 'gc_win',
+    opponentUid: chall,
+    marketTitle: String(data.marketTitle ?? ''),
+    yourPick: String(data.opponentPickLabel ?? ''),
+  };
+}
+
 export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const {
     userName,
@@ -199,14 +283,24 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     [mockNflGames],
   );
   const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
-  const [pendingWinBets, setPendingWinBets] = useState<Bet[]>([]);
-  const [activeWinBet, setActiveWinBet] = useState<Bet | null>(null);
+  const [celebrationQueue, setCelebrationQueue] = useState<QueuedCelebration[]>([]);
+  const [activeCelebration, setActiveCelebration] = useState<QueuedCelebration | null>(null);
   const [challengeFriendTarget, setChallengeFriendTarget] = useState<Friend | null>(null);
   const seenWinningBetIds = useRef<Set<string>>(new Set());
   const hasInitializedWinTracking = useRef(false);
+  const seenH2hWinCelebrationIds = useRef<Set<string>>(new Set());
+  const h2hBootstrapDone = useRef(false);
+  const lastH2hOrigSnap = useRef<QuerySnapshot | null>(null);
+  const lastH2hChallSnap = useRef<QuerySnapshot | null>(null);
+  const seenGcWinCelebrationIds = useRef<Set<string>>(new Set());
+  const gcBootstrapDone = useRef(false);
+  const lastGcChallSnap = useRef<QuerySnapshot | null>(null);
+  const lastGcOppSnap = useRef<QuerySnapshot | null>(null);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
   const seenWinningBetsStorageKey = userUid ? `bethub_seen_winning_bets:${userUid}` : '';
+  const seenH2hWinCelebrationStorageKey = userUid ? `bethub_seen_h2h_win_celebration:${userUid}` : '';
+  const seenGcWinCelebrationStorageKey = userUid ? `bethub_seen_gc_win_celebration:${userUid}` : '';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -214,78 +308,16 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   }, [isLightMode]);
 
   const normalizeSpreadLine = (line: number) => (line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1));
-  const pickRandom = <T,>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
   const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
-  const randomWeek = () => Math.floor(randomBetween(1, 19));
-
-  const makeMockGame = (idPrefix: string, previous?: MockNflGameState): MockNflGameState => {
-    const teamPool = MOCK_NFL_TEAM_POOL;
-    const shouldFlip = Boolean(previous) && Math.random() < 0.5;
-    const awayTeam = shouldFlip && previous ? previous.homeTeam : pickRandom(teamPool);
-    let homeTeam = shouldFlip && previous ? previous.awayTeam : pickRandom(teamPool);
-    let guard = 0;
-    while (homeTeam === awayTeam && guard < 10) {
-      homeTeam = pickRandom(teamPool);
-      guard += 1;
-    }
-
-    const spreadMag = randomSpreadMagnitudeHalf();
-    const awayFavored = Math.random() < 0.5;
-    const spreadLine = awayFavored ? -spreadMag : spreadMag;
-    const ml = mlDecimalsForFavorite(awayFavored);
-    const sp = spreadSideDecimals();
-    const tot = totalSideDecimals();
-    return {
-      id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      week: randomWeek(),
-      awayTeam,
-      homeTeam,
-      awayOdds: ml.away,
-      homeOdds: ml.home,
-      spreadAwayOdds: sp.away,
-      spreadHomeOdds: sp.home,
-      totalOverOdds: tot.over,
-      totalUnderOdds: tot.under,
-      spreadLine,
-      totalLine: randomTotalLineHalf(),
-      status: 'UPCOMING',
-      awayScore: null,
-      homeScore: null,
-      winner: null,
-      updatedAtMs: Date.now(),
-    };
-  };
-
-  const ensureMockBoard = (existing: MockNflGameState[]): MockNflGameState[] => {
-    const upcoming = existing.filter((g) => g.status !== 'FINAL');
-    const seeded = [...upcoming];
-    while (seeded.length < 3) {
-      seeded.push(makeMockGame('mock-nfl', seeded[seeded.length - 1]));
-    }
-    return seeded.slice(0, 3);
-  };
 
   useEffect(() => {
-    if (!userUid) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const stored = await getUserMockNflGames(userUid);
-        if (cancelled) return;
-        const board = ensureMockBoard(stored);
-        setMockNflGames(board);
-        await saveUserMockNflGames(userUid, board);
-      } catch (err) {
-        console.error('Failed to load mock NFL games', err);
-        if (cancelled) return;
-        const board = ensureMockBoard([]);
-        setMockNflGames(board);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userUid]);
+    const unsub = subscribeToGlobalMockNflGames(
+      (games) => setMockNflGames(games),
+      (err) => console.error('Global mock NFL subscription failed', err),
+    );
+    void ensureGlobalMockNflBoardSeeded().catch((e) => console.error('ensureGlobalMockNflBoardSeeded', e));
+    return () => unsub();
+  }, []);
 
   const simulateMockGame = async (gameId: string, mode: 'RANDOM' | 'AWAY' | 'HOME') => {
     let finalizedGame: MockNflGameState | null = null;
@@ -315,24 +347,20 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       return finalized;
     });
     setMockNflGames(next);
-    if (userUid) {
-      await saveUserMockNflGames(userUid, next);
-      if (finalizedGame) {
-        await settleUserMockNflGameBets(userUid, finalizedGame);
-        await reconcileMockGameChallengesAfterUserGameFinal(userUid, finalizedGame);
-      }
+    await saveGlobalMockNflGames(next);
+    if (finalizedGame) {
+      await settleAllUsersForMockNflGame(finalizedGame);
+      await reconcileMockGameChallengesAfterGlobalMockFinal(finalizedGame);
     }
   };
 
   const createNewMockGame = async (gameId: string) => {
     const next = mockNflGames.map((g) => {
       if (g.id !== gameId) return g;
-      return makeMockGame('mock-nfl', g);
+      return createRandomMockNflGameState('mock-nfl', g);
     });
     setMockNflGames(next);
-    if (userUid) {
-      await saveUserMockNflGames(userUid, next);
-    }
+    await saveGlobalMockNflGames(next);
   };
 
   useEffect(() => {
@@ -456,9 +484,21 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   useEffect(() => {
     seenWinningBetIds.current = new Set();
     hasInitializedWinTracking.current = false;
-    setPendingWinBets([]);
-    setActiveWinBet(null);
-  }, [userUid]);
+    seenH2hWinCelebrationIds.current = seenH2hWinCelebrationStorageKey
+      ? readStringSetFromLs(seenH2hWinCelebrationStorageKey)
+      : new Set();
+    seenGcWinCelebrationIds.current = seenGcWinCelebrationStorageKey
+      ? readStringSetFromLs(seenGcWinCelebrationStorageKey)
+      : new Set();
+    h2hBootstrapDone.current = false;
+    gcBootstrapDone.current = false;
+    lastH2hOrigSnap.current = null;
+    lastH2hChallSnap.current = null;
+    lastGcChallSnap.current = null;
+    lastGcOppSnap.current = null;
+    setCelebrationQueue([]);
+    setActiveCelebration(null);
+  }, [userUid, seenH2hWinCelebrationStorageKey, seenGcWinCelebrationStorageKey]);
 
   useEffect(() => {
     if (!userUid) return;
@@ -495,15 +535,166 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
 
     unseen.forEach((bet) => seenWinningBetIds.current.add(bet.id));
     writeStoredSeenIds(seenWinningBetIds.current);
-    setPendingWinBets((prev) => [...prev, ...unseen]);
+    setCelebrationQueue((prev) => {
+      const keys = new Set(prev.map((q) => q.key));
+      const additions: QueuedCelebration[] = unseen
+        .filter((bet) => !keys.has(`bet:${bet.id}`))
+        .map((bet) => ({ key: `bet:${bet.id}`, payload: { kind: 'bet', bet } as const }));
+      return [...prev, ...additions];
+    });
   }, [props.activeBets, seenWinningBetsStorageKey, userUid]);
 
   useEffect(() => {
-    if (activeWinBet || pendingWinBets.length === 0) return;
-    const [next, ...rest] = pendingWinBets;
-    setActiveWinBet(next);
-    setPendingWinBets(rest);
-  }, [activeWinBet, pendingWinBets]);
+    if (activeCelebration || celebrationQueue.length === 0) return;
+    const [next, ...rest] = celebrationQueue;
+    setActiveCelebration(next);
+    setCelebrationQueue(rest);
+  }, [activeCelebration, celebrationQueue]);
+
+  useEffect(() => {
+    if (!userUid || !seenH2hWinCelebrationStorageKey) return;
+
+    const persistH2hSeen = () => writeStringSetToLs(seenH2hWinCelebrationStorageKey, seenH2hWinCelebrationIds.current);
+
+    const tryBootstrapH2h = () => {
+      if (h2hBootstrapDone.current) return;
+      if (!lastH2hOrigSnap.current || !lastH2hChallSnap.current) return;
+      h2hBootstrapDone.current = true;
+      const merged = new Map([...lastH2hOrigSnap.current.docs, ...lastH2hChallSnap.current.docs].map((d) => [d.id, d]));
+      merged.forEach((d) => {
+        const data = d.data() as Record<string, unknown>;
+        if (userWonH2h(data, userUid)) seenH2hWinCelebrationIds.current.add(`h2h_win:${d.id}`);
+      });
+      persistH2hSeen();
+    };
+
+    const qOrig = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
+    const qChall = query(collection(db, H2H_COL), where('challengerUserId', '==', userUid));
+
+    const unsubOrig = onSnapshot(qOrig, (snap) => {
+      lastH2hOrigSnap.current = snap;
+      tryBootstrapH2h();
+      if (!h2hBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        const data = ch.doc.data() as Record<string, unknown>;
+        if (!userWonH2h(data, userUid)) return;
+        const dedupe = `h2h_win:${ch.doc.id}`;
+        if (seenH2hWinCelebrationIds.current.has(dedupe)) return;
+        seenH2hWinCelebrationIds.current.add(dedupe);
+        persistH2hSeen();
+        const payload = h2hDocToWinPayload(data, userUid);
+        setCelebrationQueue((prev) =>
+          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
+        );
+      });
+    });
+
+    const unsubChall = onSnapshot(qChall, (snap) => {
+      lastH2hChallSnap.current = snap;
+      tryBootstrapH2h();
+      if (!h2hBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        const data = ch.doc.data() as Record<string, unknown>;
+        if (!userWonH2h(data, userUid)) return;
+        const dedupe = `h2h_win:${ch.doc.id}`;
+        if (seenH2hWinCelebrationIds.current.has(dedupe)) return;
+        seenH2hWinCelebrationIds.current.add(dedupe);
+        persistH2hSeen();
+        const payload = h2hDocToWinPayload(data, userUid);
+        setCelebrationQueue((prev) =>
+          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
+        );
+      });
+    });
+
+    return () => {
+      unsubOrig();
+      unsubChall();
+    };
+  }, [userUid, seenH2hWinCelebrationStorageKey]);
+
+  useEffect(() => {
+    if (!userUid || !seenGcWinCelebrationStorageKey) return;
+
+    const persistGcSeen = () => writeStringSetToLs(seenGcWinCelebrationStorageKey, seenGcWinCelebrationIds.current);
+
+    const tryBootstrapGc = () => {
+      if (gcBootstrapDone.current) return;
+      if (!lastGcChallSnap.current || !lastGcOppSnap.current) return;
+      gcBootstrapDone.current = true;
+      const merged = new Map([...lastGcChallSnap.current.docs, ...lastGcOppSnap.current.docs].map((d) => [d.id, d]));
+      merged.forEach((d) => {
+        const data = d.data() as Record<string, unknown>;
+        if (userWonGc(data, userUid)) seenGcWinCelebrationIds.current.add(`gc_win:${d.id}`);
+      });
+      persistGcSeen();
+    };
+
+    const qChall = query(collection(db, GC_COL), where('challengerUid', '==', userUid));
+    const qOpp = query(collection(db, GC_COL), where('opponentUid', '==', userUid));
+
+    const unsubChall = onSnapshot(qChall, (snap) => {
+      lastGcChallSnap.current = snap;
+      tryBootstrapGc();
+      if (!gcBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        const data = ch.doc.data() as Record<string, unknown>;
+        if (!userWonGc(data, userUid)) return;
+        const dedupe = `gc_win:${ch.doc.id}`;
+        if (seenGcWinCelebrationIds.current.has(dedupe)) return;
+        seenGcWinCelebrationIds.current.add(dedupe);
+        persistGcSeen();
+        const payload = gcDocToWinPayload(data, userUid);
+        setCelebrationQueue((prev) =>
+          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
+        );
+      });
+    });
+
+    const unsubOpp = onSnapshot(qOpp, (snap) => {
+      lastGcOppSnap.current = snap;
+      tryBootstrapGc();
+      if (!gcBootstrapDone.current) return;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === 'removed') return;
+        const data = ch.doc.data() as Record<string, unknown>;
+        if (!userWonGc(data, userUid)) return;
+        const dedupe = `gc_win:${ch.doc.id}`;
+        if (seenGcWinCelebrationIds.current.has(dedupe)) return;
+        seenGcWinCelebrationIds.current.add(dedupe);
+        persistGcSeen();
+        const payload = gcDocToWinPayload(data, userUid);
+        setCelebrationQueue((prev) =>
+          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
+        );
+      });
+    });
+
+    return () => {
+      unsubChall();
+      unsubOpp();
+    };
+  }, [userUid, seenGcWinCelebrationStorageKey]);
+
+  const handleCloseCelebration = async (opts?: { banter?: string }) => {
+    const cur = activeCelebration;
+    setActiveCelebration(null);
+    const banter = opts?.banter?.trim();
+    if (!cur || !banter || !userUid) return;
+    if (cur.payload.kind !== 'h2h_win' && cur.payload.kind !== 'gc_win') return;
+    const threadId = makeDmThreadId(userUid, cur.payload.opponentUid);
+    await sendDirectMessage({
+      threadId,
+      messageId: `celebration_banter_${Date.now()}`,
+      fromUserId: userUid,
+      toUserId: cur.payload.opponentUid,
+      text: banter,
+      createdAtMs: Date.now(),
+    });
+  };
 
 
   // ── Grab uid once for sidebar cards ────────────────────────────
@@ -1216,7 +1407,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                 <span className="inline-flex rounded-full border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-200">
                                   Mock NFL
                                 </span>
-                                <span className="text-xs text-slate-300">Simulate outcomes and place test bets</span>
+                                <span className="text-xs text-slate-300">Simulated NFL games.</span>
                               </div>
                             </div>
                             {footballApiLeagues.length > 0 && (
@@ -1663,9 +1854,9 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           />
         )}
         <WinCelebrationModal
-          bet={activeWinBet}
-          open={Boolean(activeWinBet)}
-          onClose={() => setActiveWinBet(null)}
+          payload={activeCelebration?.payload ?? null}
+          open={Boolean(activeCelebration)}
+          onClose={handleCloseCelebration}
         />
       </div>
   );

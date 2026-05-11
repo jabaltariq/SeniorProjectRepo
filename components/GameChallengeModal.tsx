@@ -1,13 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, Loader2, ChevronRight, Trophy, Search } from 'lucide-react';
+import { X, Loader2, ChevronRight, Trophy } from 'lucide-react';
 import type { Market, MarketOption } from '@/models';
-import { filterMarketsBySearchQuery } from '@/lib/marketSearch';
 import { createGameChallengeAndNotify, opposingOptionForMarket } from '@/services/gameChallenges';
 
 export interface GameChallengeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Your three rotating NFL sim games (same source as Markets → NFL mock board). */
+  /** Global NFL sim games (same board as Markets → NFL for everyone). */
   mockNflMarkets: Market[];
   opponentUserId: string;
   opponentDisplayName: string;
@@ -37,7 +36,7 @@ function marketIsSelectable(m: Market): boolean {
 }
 
 /**
- * Search the three NFL sim games, pick ML / spread / total, optional note → DM.
+ * Pick one of the live global NFL sim games, ML / spread / total, optional note → DM.
  */
 export const GameChallengeModal: React.FC<GameChallengeModalProps> = ({
   isOpen,
@@ -51,23 +50,19 @@ export const GameChallengeModal: React.FC<GameChallengeModalProps> = ({
   challengerDisplayName,
   onSent,
 }) => {
-  const searchPool = useMemo(() => mockNflMarkets.filter(marketIsSelectable), [mockNflMarkets]);
-  const allMockRows = useMemo(() => mockNflMarkets, [mockNflMarkets]);
+  const openGames = useMemo(() => mockNflMarkets.filter(marketIsSelectable), [mockNflMarkets]);
+  const endedOnly =
+    mockNflMarkets.length > 0 &&
+    openGames.length === 0 &&
+    mockNflMarkets.every((m) => m.status === 'CLOSED');
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [selectedOption, setSelectedOption] = useState<MarketOption | null>(null);
   const [dmNote, setDmNote] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const filteredMarkets = useMemo(() => {
-    const base = searchPool.filter(marketIsSelectable);
-    return filterMarketsBySearchQuery(base, searchQuery);
-  }, [searchPool, searchQuery]);
-
   const reset = useCallback(() => {
-    setSearchQuery('');
     setSelectedMarket(null);
     setSelectedOption(null);
     setDmNote('');
@@ -107,9 +102,7 @@ export const GameChallengeModal: React.FC<GameChallengeModalProps> = ({
   if (!isOpen) return null;
 
   const safeBg = backgroundImageUrl.replace(/"/g, '\\"');
-  const hasLiveGames = searchPool.length > 0;
-  const endedOnly =
-    allMockRows.length > 0 && searchPool.length === 0 && allMockRows.every((m) => m.status === 'CLOSED');
+  const hasLiveGames = openGames.length > 0;
 
   return (
     <div
@@ -155,7 +148,8 @@ export const GameChallengeModal: React.FC<GameChallengeModalProps> = ({
                 vs. {opponentDisplayName}
               </h2>
               <p className="text-[11px] leading-snug text-slate-400">
-                NFL Mock Bets: Winner gets a leaderboard challenge win.
+                Same global NFL sim board for everyone. Winner gets a leaderboard challenge win when the sim game
+                grades.
               </p>
             </div>
           </div>
@@ -170,75 +164,54 @@ export const GameChallengeModal: React.FC<GameChallengeModalProps> = ({
           </button>
         </div>
 
-        <div className="pointer-events-auto shrink-0 border-b border-slate-800/60 px-4 py-3 sm:px-5">
-          <label className="sr-only" htmlFor="challenge-game-search">
-            Search NFL sim games
-          </label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <input
-              id="challenge-game-search"
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              disabled={!selectedMarket && allMockRows.length === 0}
-              placeholder={
-                allMockRows.length === 0
-                  ? 'Loading your NFL sim board…'
-                  : 'Search teams, spreads, totals, moneylines…'
-              }
-              className="w-full rounded-xl border border-slate-700/80 bg-slate-950/50 py-2.5 pl-10 pr-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-amber-500/50 disabled:opacity-50"
-            />
-          </div>
-          <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-slate-500" htmlFor="challenge-dm-note">
-            Optional message (sent first in chat)
-          </label>
-          <textarea
-            id="challenge-dm-note"
-            value={dmNote}
-            onChange={(e) => setDmNote(e.target.value)}
-            rows={2}
-            maxLength={500}
-            placeholder="Say hi or add context…"
-            className="mt-1 w-full resize-none rounded-xl border border-slate-700/80 bg-slate-950/40 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-500/45"
-          />
-        </div>
-
         <div className="pointer-events-auto min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4 custom-scrollbar">
           {!selectedMarket ? (
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Choose a game</p>
-              {allMockRows.length === 0 ? (
-                <p className="py-8 text-center text-sm text-slate-500">
-                  Your sim games are still loading. Stay on the app for a moment or open Markets → Football → NFL.
-                </p>
-              ) : endedOnly ? (
-                <p className="py-8 text-center text-sm text-slate-500">
-                  All three sim games are finished right now. Start a new matchup from the NFL mock board, then open
-                  challenge again.
-                </p>
-              ) : filteredMarkets.length === 0 ? (
-                <p className="py-8 text-center text-sm text-slate-500">
-                  No open games match that search. Try a team name or clear the box to see all live sim games.
-                </p>
-              ) : (
-                filteredMarkets.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedMarket(m);
-                      setSelectedOption(null);
-                    }}
-                    className="w-full rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-3 text-left text-sm text-slate-100 transition-colors hover:border-amber-500/40 hover:bg-slate-900/70"
-                  >
-                    <span className="font-bold line-clamp-2">{m.title}</span>
-                    <span className="mt-1 block text-[11px] uppercase tracking-wider text-slate-500">
-                      NFL sim · {m.status}
-                    </span>
-                  </button>
-                ))
-              )}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Choose a game</p>
+                {mockNflMarkets.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-500">
+                    Loading the global NFL sim board… Open Markets → Football → NFL if this stays empty.
+                  </p>
+                ) : endedOnly ? (
+                  <p className="py-6 text-center text-sm text-slate-500">
+                    All five sim games are finished right now. Spin up new games from the NFL mock board, then try
+                    again.
+                  </p>
+                ) : (
+                  openGames.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMarket(m);
+                        setSelectedOption(null);
+                      }}
+                      className="w-full rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-3 text-left text-sm text-slate-100 transition-colors hover:border-amber-500/40 hover:bg-slate-900/70"
+                    >
+                      <span className="font-bold line-clamp-2">{m.title}</span>
+                      <span className="mt-1 block text-[11px] uppercase tracking-wider text-slate-500">
+                        NFL sim · {m.status}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500" htmlFor="challenge-dm-note">
+                  Optional message (sent first in chat)
+                </label>
+                <textarea
+                  id="challenge-dm-note"
+                  value={dmNote}
+                  onChange={(e) => setDmNote(e.target.value)}
+                  rows={2}
+                  maxLength={500}
+                  placeholder="Say hi or add context…"
+                  className="mt-1 w-full resize-none rounded-xl border border-slate-700/80 bg-slate-950/40 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-500/45"
+                />
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -304,7 +277,7 @@ export const GameChallengeModal: React.FC<GameChallengeModalProps> = ({
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600/90 py-3 text-sm font-bold uppercase tracking-wide text-slate-950 transition-colors hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >
             {sending ? <Loader2 className="animate-spin" size={18} /> : <Trophy size={18} />}
-            Send to messages
+            Send
             <ChevronRight size={18} />
           </button>
           <button

@@ -7,8 +7,11 @@ import { CounterBetDmCard } from '../CounterBetDmCard';
 import { isGameChallengeMessageText, parseGameChallengeIdFromMessage } from '@/services/gameChallenges';
 import {
   isCounterBetInviteMessageText,
+  isCounterBetSettlementMessageText,
   parseCounterBetInviteIdFromMessage,
+  parseCounterBetSettlementH2hIdFromMessage,
 } from '@/services/dbOps';
+import { CounterBetSettlementDmCard } from '../CounterBetSettlementDmCard';
 
 export type ChatMessage = {
   id: string;
@@ -137,9 +140,13 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             {messages.map((m) => {
               const isSelf = m.fromUserId === currentUserId;
               const gcId = isGameChallengeMessageText(m.text) ? parseGameChallengeIdFromMessage(m.text) : null;
-              const counterH2hId = isCounterBetInviteMessageText(m.text)
-                ? parseCounterBetInviteIdFromMessage(m.text)
+              const settleH2hId = isCounterBetSettlementMessageText(m.text)
+                ? parseCounterBetSettlementH2hIdFromMessage(m.text)
                 : null;
+              const counterH2hId =
+                !settleH2hId && isCounterBetInviteMessageText(m.text)
+                  ? parseCounterBetInviteIdFromMessage(m.text)
+                  : null;
               return (
                 <div
                   key={m.id}
@@ -168,12 +175,14 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                         <div className="flex items-start justify-between gap-2">
                           {gcId ? (
                             <GameChallengeDmCard challengeId={gcId} currentUserId={currentUserId} />
+                          ) : settleH2hId ? (
+                            <CounterBetSettlementDmCard h2hId={settleH2hId} currentUserId={currentUserId} />
                           ) : counterH2hId ? (
                             <CounterBetDmCard h2hId={counterH2hId} currentUserId={currentUserId} />
                           ) : (
                             <p className="text-sm chat-bubble-text whitespace-pre-wrap text-slate-100">{m.text}</p>
                           )}
-                          {isSelf && onDeleteMessage && !gcId && !counterH2hId ? (
+                          {isSelf && onDeleteMessage && !gcId && !counterH2hId && !settleH2hId ? (
                             <button
                               type="button"
                               onClick={() => onDeleteMessage(m.id)}
