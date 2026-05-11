@@ -117,7 +117,13 @@ interface DashboardViewProps {
   leaderboardEntries: LeaderboardEntry[];
   friends: Friend[];
   activity: SocialActivity[];
-  onPlaceBet: (stake: number, betType?: 'single' | 'parlay', boost?: BoostType | null, onBoostUsed?: () => void) => void;
+  onPlaceBet: (
+    stake: number,
+    betType?: 'single' | 'parlay',
+    boost?: BoostType | null,
+    onBoostUsed?: () => void,
+    singleTarget?: { market: Market; option: MarketOption } | null,
+  ) => void;
   onClearBet: () => void;
   onSelectBet: (market: Market, option: MarketOption) => void;
   onFocusQueuedSelection: (market: Market, option: MarketOption) => void;
@@ -424,9 +430,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     historyMaxStake !== null ||
     historySort !== 'recent';
 
-  const handlePlaceBetWithBoost = (stake: number, betType?: 'single' | 'parlay') => {
+  const handlePlaceBetWithBoost = (
+    stake: number,
+    betType?: 'single' | 'parlay',
+    singleTarget?: { market: Market; option: MarketOption } | null,
+  ) => {
     console.log('handlePlaceBetWithBoost called, activeBoost:', activeBoost);
-    onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null));
+    onPlaceBet(stake, betType, activeBoost, () => setActiveBoost(null), singleTarget);
   };
 
   useEffect(() => {
@@ -1014,7 +1024,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                             title={tab}
                             className={`market-top-pill rounded-lg border p-2 flex items-center justify-center text-[10px] font-black transition-all ${
                                 sportPrimarySelected
-                                    ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                    ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 text-[#7dd3fc]'
                                     : sportMutedSelected
                                       ? 'border-slate-600 bg-slate-800/70 text-slate-300 ring-1 ring-slate-700/80'
                                       : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
@@ -1031,7 +1041,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         aria-pressed={sportFilter === 'ALL'}
                         className={`market-top-pill rounded-lg border p-2 flex items-center justify-center transition-all ${
                             sportFilter === 'ALL'
-                                ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 text-[#7dd3fc]'
                                 : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                         }`}
                     >
@@ -1129,7 +1139,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                           value={searchQuery}
                           onChange={(e) => onSearchChange(e.target.value)}
                           disabled={!hasSelectedSport}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-blue-500 transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-[#3FA9F5] transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                       />
                     </div>
                   </div>
@@ -1156,7 +1166,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       }}
                                       className={`shrink-0 inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition-all ${
                                           sportFilter === tab
-                                              ? 'border-violet-400/80 bg-violet-500/20 text-violet-200'
+                                              ? 'border-[#3FA9F5]/80 bg-[#3FA9F5]/15 text-[#7dd3fc]'
                                               : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                                       }`}
                                   >
@@ -1170,7 +1180,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         {markets.length >= VIEW_ALL_GAMES_VISIBLE_THRESHOLD && (
                           <button
                             type="button"
-                            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-blue-300 transition-colors"
+                            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-slate-300 hover:text-[#7dd3fc] transition-colors"
                           >
                             View All Games <ChevronRight size={14} />
                           </button>
@@ -1200,7 +1210,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                         <button
                             onClick={onRetryMarkets}
                             disabled={!hasSelectedSport}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-[#3FA9F5] hover:bg-[#2e9ae8] text-slate-950 rounded-xl font-bold transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <RefreshCw size={18} /> Retry
                         </button>
@@ -1347,12 +1357,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         onClick={() => onSelectBet(mockMarket, opt)}
                                         className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                           isMockOptionSelected(game.id, opt.id)
-                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                            ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{formatAmericanOddsLine(opt.odds)}</p>
+                                        <p className="text-lg leading-none font-semibold text-[#3FA9F5]">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1367,12 +1377,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         onClick={() => onSelectBet(mockMarket, opt)}
                                         className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                           isMockOptionSelected(game.id, opt.id)
-                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                            ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{formatAmericanOddsLine(opt.odds)}</p>
+                                        <p className="text-lg leading-none font-semibold text-[#3FA9F5]">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1387,12 +1397,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                         onClick={() => onSelectBet(mockMarket, opt)}
                                         className={`market-odds-btn rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                           isMockOptionSelected(game.id, opt.id)
-                                            ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                            ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                            : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                         } ${!bettable ? 'cursor-not-allowed opacity-65' : ''}`}
                                       >
                                         <p className="text-[11px] text-slate-300 truncate">{opt.label}</p>
-                                        <p className="text-lg leading-none font-semibold text-blue-300">{formatAmericanOddsLine(opt.odds)}</p>
+                                        <p className="text-lg leading-none font-semibold text-[#3FA9F5]">{formatAmericanOddsLine(opt.odds)}</p>
                                       </button>
                                     ))}
                                   </div>
@@ -1467,12 +1477,12 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                                       onClick={() => onSelectBet(market, opt)}
                                                       className={`market-odds-btn w-full rounded-md border px-2.5 py-1.5 text-left transition-all ${
                                                           isOptionSelected(market, opt)
-                                                              ? 'border-violet-400 bg-violet-600/20 shadow-[0_0_0_1px_rgba(167,139,250,0.45)]'
-                                                              : 'border-slate-700/90 bg-slate-900/95 hover:border-blue-500/80 hover:bg-blue-600/15'
+                                                              ? 'border-[#3FA9F5] bg-[#3FA9F5]/15 shadow-[0_0_0_1px_rgba(63,169,245,0.45)]'
+                                                              : 'border-slate-700/90 bg-slate-900/95 hover:border-[#3FA9F5]/75 hover:bg-[#3FA9F5]/12'
                                                       }`}
                                                   >
                                                     <p className="text-[10px] text-slate-400 truncate">{opt.label}</p>
-                                                    <p className={`text-sm font-semibold ${isOptionSelected(market, opt) ? 'text-violet-200' : 'text-blue-300'}`}>
+                                                    <p className={`text-sm font-semibold ${isOptionSelected(market, opt) ? 'text-[#7dd3fc]' : 'text-[#3FA9F5]'}`}>
                                                       {formatAmericanOddsLine(opt.odds)}
                                                     </p>
                                                   </button>
@@ -1627,14 +1637,18 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                 activeBoost={activeBoost}
                 limitError={null}
                 parlayRuleError={parlayRuleError}
-                onViewAllHistory={() => navigate('/history')}
+                isLightMode={isLightMode}
+                onGoToHistory={() => {
+                  setIsBetSlipCollapsed(true);
+                  navigate('/history');
+                }}
             />
         )}
         {view === 'MARKETS' && isBetSlipCollapsed && (
           <button
             type="button"
             onClick={() => setIsBetSlipCollapsed(false)}
-            className="fixed top-4 right-4 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-violet-400/50 bg-[#171427] text-violet-200 shadow-lg transition-colors hover:bg-[#221b3d]"
+            className="fixed top-4 right-4 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#3FA9F5]/50 bg-[#171427] text-[#7dd3fc] shadow-lg transition-colors hover:bg-[#221b3d]"
             title="Open bet slip"
             aria-label="Open bet slip"
           >

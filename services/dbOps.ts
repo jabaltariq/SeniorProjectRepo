@@ -712,29 +712,35 @@ export async function settleUserMockNflGameBets(
     );
     if (pending.length === 0) return;
 
-    await Promise.all(
-        pending.map(async (bet) => {
-            if (bet.betType === "parlay") {
-                const legs = bet.parlayLegs ?? [];
-                for (let idx = 0; idx < legs.length; idx++) {
-                    const leg = legs[idx];
-                    if (leg.marketId !== marketId) continue;
-                    if (leg.result && leg.result !== "PENDING") continue; // already decided
-                    const result = outcomeForParlayLeg(leg);
-                    // A parlay leg that we can't recognize for this market is
-                    // recorded as VOID — `computeParlayRollup` treats that the
-                    // same as PUSH (drops the leg from the payout).
-                    await recordParlayLegResult(bet.id, idx, result);
-                }
-                return;
+    // Serialize parlay updates per bet so two legs on the same ticket never
+    // race in separate Firestore transactions (one could read stale legs and
+    // skip the roll-up LOST settle).
+    for (const bet of pending) {
+        if (bet.betType === "parlay") {
+            const legs = bet.parlayLegs ?? [];
+            let wroteAnyLeg = false;
+            for (let idx = 0; idx < legs.length; idx++) {
+                const leg = legs[idx];
+                if (leg.marketId !== marketId) continue;
+                if (leg.result && leg.result !== "PENDING") continue; // already decided
+                const result = outcomeForParlayLeg(leg);
+                // A parlay leg that we can't recognize for this market is
+                // recorded as VOID — `computeParlayRollup` treats that the
+                // same as PUSH (drops the leg from the payout).
+                await recordParlayLegResult(bet.id, idx, result);
+                wroteAnyLeg = true;
             }
+            if (wroteAnyLeg) {
+                await settleParlayBetIfReady(bet.id);
+            }
+            continue;
+        }
 
-            // Single bet on this exact mock market.
-            if (bet.marketId === marketId) {
-                await settleBet(bet, outcomeFor(bet.optionLabel));
-            }
-        }),
-    );
+        // Single bet on this exact mock market.
+        if (bet.marketId === marketId) {
+            await settleBet(bet, outcomeFor(bet.optionLabel));
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────

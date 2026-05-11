@@ -5,6 +5,17 @@
   box-sizing: border-box;
 }
 
+/* Hide scrollbars while keeping overflow scroll (e.g. bet slip lists) */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 #root {
   min-height: 100vh;
 }
