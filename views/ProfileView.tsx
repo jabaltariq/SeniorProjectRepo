@@ -9,8 +9,12 @@ import {
   Target,
   Clock3,
   Swords,
+  MessageSquare,
 } from 'lucide-react';
 import { CounterBetModal } from '../components/CounterBetModal';
+import { CounterOpponentModal } from '@/components/CounterOpponentModal';
+import { GameChallengeModal } from '@/components/GameChallengeModal';
+import { challengeBetEligibility } from '@/lib/challengeBetEligibility';
 import { proposeHeadToHead, sendFriendRequest } from '@/services/dbOps';
 import {
   getAccountProfile,
@@ -24,7 +28,7 @@ import {
   type AccountStatKey,
   type AchievementDefinition,
 } from '@/services/dbOps';
-import type { Bet } from '../models';
+import type { Bet, Market } from '../models';
 import { SettingsView } from './SettingsView';
 import { getUserStoreState } from '@/services/storeOps';
 import { findStoreAvatar } from '@/models/storeItems';
@@ -37,6 +41,10 @@ interface ProfileViewProps {
   balance: number;
   activeBetsCount: number;
   currentUserId?: string | null;
+  /** Display name for DM / game challenges (BetHub username). */
+  currentUserDisplayName?: string;
+  /** Markets list for picking a game to challenge someone on. */
+  markets?: Market[];
   themeMode: UserThemeMode;
   themeSaving: boolean;
   onThemeModeChange: (mode: UserThemeMode) => void;
@@ -48,6 +56,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   balance,
   activeBetsCount,
   currentUserId,
+  currentUserDisplayName,
+  markets = [],
   themeMode,
   themeSaving,
   onThemeModeChange,
@@ -96,6 +106,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [publicPreview, setPublicPreview] = useState(false);
   const [friendRequestState, setFriendRequestState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [showCounterModal, setShowCounterModal] = useState(false);
+  const [showGameChallengeModal, setShowGameChallengeModal] = useState(false);
+  const [challengeBets, setChallengeBets] = useState<Bet[]>([]);
 
   // Counter-Bet (head-to-head) modal target.
   const [counterBetTarget, setCounterBetTarget] = useState<Bet | null>(null);
@@ -113,22 +126,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     | { kind: 'enabled' };
   const fadeEligibility = (bet: Bet): FadeEligibility => {
     if (isOwnProfile) return { kind: 'hidden' };
-    const status = bet.status ?? 'PENDING';
-    if (status !== 'PENDING')      return { kind: 'disabled', reason: `This bet is already ${status.toLowerCase()}.` };
-    if (bet.betType === 'parlay')  return { kind: 'disabled', reason: 'Parlays can\'t be faded yet.' };
-    if (!bet.eventId || !bet.sportKey) {
-      return { kind: 'disabled', reason: 'This bet is missing event info — too old to auto-settle a fade.' };
-    }
-    if (bet.odds <= 1)             return { kind: 'disabled', reason: 'Invalid odds — can\'t compute a fair fade.' };
-    if (bet.eventStartsAt && bet.eventStartsAt.getTime() <= Date.now()) {
-      return { kind: 'disabled', reason: 'Game has already started — too late to fade.' };
-    }
-    return { kind: 'enabled' };
+    const r = challengeBetEligibility(bet);
+    if (r.kind === 'enabled') return { kind: 'enabled' };
+    return { kind: 'disabled', reason: r.reason };
   };
 
   useEffect(() => {
     let cancelled = false;
     setFriendRequestState('idle');
+    setShowCounterModal(false);
+    setShowGameChallengeModal(false);
 
     async function loadAccount() {
       if (!profileUserId) {
@@ -191,6 +198,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           setUnlockedAchievementIds([]);
         }
 
+        setChallengeBets([...bets].sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime()));
         setRecentBets(
           [...bets]
             .sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime())
@@ -429,9 +437,29 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                           onClick={() => navigate('/friends', { state: { openChatWithUserId: profileUserId } })}
                           className="inline-flex items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:border-blue-400/60 hover:bg-blue-500/20 transition-colors"
                         >
-                          <Swords size={14} />
+                          <MessageSquare size={14} aria-hidden />
                           Message
                         </button>
+                        {currentUserId && currentUserId !== profileUserId && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setShowCounterModal(true)}
+                              className="inline-flex items-center gap-2 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 transition-colors hover:border-red-400/55 hover:bg-red-500/20"
+                            >
+                              <Swords size={14} aria-hidden />
+                              Counter
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowGameChallengeModal(true)}
+                              className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-100 transition-colors hover:border-amber-400/60 hover:bg-amber-500/20"
+                            >
+                              <Trophy size={14} aria-hidden />
+                              Challenge
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           onClick={() => void handleSendFriendRequest()}
@@ -617,7 +645,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <section className={`${sectionShell} p-6 sm:p-8`}>
                   <div className="mb-5 flex items-center justify-between gap-3">
                     <h3 className={`${sectionLabel} flex items-center gap-2 text-slate-400`}>
-                      <Target size={14} className="text-violet-400/90" aria-hidden />
                       Featured Bets
                     </h3>
                     {showEditUi && (
@@ -722,6 +749,33 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </section>
               )}
         </div>
+      )}
+      {showCounterModal && profileUserId && currentUserId && currentUserId !== profileUserId && (
+        <CounterOpponentModal
+          isOpen
+          onClose={() => setShowCounterModal(false)}
+          opponentUserId={profileUserId}
+          opponentDisplayName={displayName}
+          opponentAvatarUrl={profileAvatarUrl}
+          backgroundImageUrl={coverImageUrl}
+          currentUserId={currentUserId}
+          balance={balance}
+          prefetchedBets={challengeBets}
+        />
+      )}
+      {showGameChallengeModal && profileUserId && currentUserId && currentUserId !== profileUserId && (
+        <GameChallengeModal
+          isOpen
+          onClose={() => setShowGameChallengeModal(false)}
+          markets={markets}
+          opponentUserId={profileUserId}
+          opponentDisplayName={displayName}
+          opponentAvatarUrl={profileAvatarUrl}
+          backgroundImageUrl={coverImageUrl}
+          currentUserId={currentUserId}
+          challengerDisplayName={currentUserDisplayName?.trim() || userEmail.split('@')[0] || 'Player'}
+          onSent={() => navigate('/friends', { state: { openChatWithUserId: profileUserId } })}
+        />
       )}
       {counterBetTarget && currentUserId && (
         <CounterBetModal

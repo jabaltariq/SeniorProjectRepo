@@ -14,6 +14,10 @@ interface CounterBetModalProps {
   onConfirm: (originalBetId: string) => Promise<ProposeHeadToHeadResult>;
   /** Closes the modal without proposing. */
   onClose: () => void;
+  /** When set, called instead of onClose after a successful proposal (e.g. parent closes a wrapper modal). */
+  onAfterSuccess?: () => void;
+  /** Stacking order for nested modals (default z-50). */
+  overlayZIndexClass?: string;
 }
 
 /**
@@ -31,6 +35,8 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
   balance,
   onConfirm,
   onClose,
+  onAfterSuccess,
+  overlayZIndexClass = 'z-50',
 }) => {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -49,7 +55,8 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
     try {
       const result = await onConfirm(bet.id);
       if (result.success) {
-        onClose();
+        if (onAfterSuccess) onAfterSuccess();
+        else onClose();
       } else {
         setErrorMsg(friendlyError(result.error));
       }
@@ -62,7 +69,7 @@ export const CounterBetModal: React.FC<CounterBetModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    <div className={`fixed inset-0 ${overlayZIndexClass} flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200`}>
       <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl shadow-red-900/20 animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">

@@ -35,6 +35,8 @@ import { SiteFooter } from '../components/SiteFooter';
 import { ProfileView } from './ProfileView';
 import { HeadToHeadView } from './HeadToHeadView';
 import { StoreView } from './StoreView';
+import { CounterOpponentModal } from '../components/CounterOpponentModal';
+import { profileBackgroundForUid } from '@/models/profileBackgrounds';
 import { Swords, ShoppingBag } from 'lucide-react';
 import type { LeaderboardEntry, Friend, SocialActivity } from '../models';
 import { BoostType } from '@/services/dbOps.ts';
@@ -135,7 +137,6 @@ interface DashboardViewProps {
   onLeagueFilter: (league: string) => void;
   onSearchChange: (query: string) => void;
   onRetryMarkets: () => void;
-  onChallenge: (friend: Friend) => void;
   themeMode: UserThemeMode;
   themeSaving: boolean;
   onThemeModeChange: (mode: UserThemeMode) => void;
@@ -180,7 +181,6 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     onLeagueFilter,
     onSearchChange,
     onRetryMarkets,
-    onChallenge,
     themeMode,
     themeSaving,
     onThemeModeChange,
@@ -195,6 +195,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const [isBetSlipCollapsed, setIsBetSlipCollapsed] = useState(false);
   const [pendingWinBets, setPendingWinBets] = useState<Bet[]>([]);
   const [activeWinBet, setActiveWinBet] = useState<Bet | null>(null);
+  const [challengeFriendTarget, setChallengeFriendTarget] = useState<Friend | null>(null);
   const seenWinningBetIds = useRef<Set<string>>(new Set());
   const hasInitializedWinTracking = useRef(false);
 
@@ -711,7 +712,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           <SocialMessagingView
             friends={friends}
             activities={activity}
-            onChallenge={onChallenge}
+            onChallenge={(f) => setChallengeFriendTarget(f)}
             bets={betList}
             userPrivacy={userPrivacy}
             friendRequests={friendReqs}
@@ -727,6 +728,8 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             balance={balance}
             activeBetsCount={props.activeBets.length}
             currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
+            currentUserDisplayName={userName}
+            markets={markets}
             themeMode={themeMode}
             themeSaving={themeSaving}
             onThemeModeChange={onThemeModeChange}
@@ -1654,6 +1657,21 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
           >
             <Ticket size={18} />
           </button>
+        )}
+        {challengeFriendTarget && (
+          <CounterOpponentModal
+            isOpen
+            onClose={() => setChallengeFriendTarget(null)}
+            opponentUserId={challengeFriendTarget.id}
+            opponentDisplayName={challengeFriendTarget.name}
+            opponentAvatarUrl={challengeFriendTarget.avatarUrl}
+            backgroundImageUrl={
+              challengeFriendTarget.profileBackgroundUrl
+                ?? profileBackgroundForUid(challengeFriendTarget.id, challengeFriendTarget.name)
+            }
+            currentUserId={typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null}
+            balance={balance}
+          />
         )}
         <WinCelebrationModal
           bet={activeWinBet}

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import type { Friend } from '../../models';
 import { Send, Trash2, X } from 'lucide-react';
 import { UserAvatar } from '../UserAvatar';
+import { GameChallengeDmCard } from '../GameChallengeDmCard';
+import { isGameChallengeMessageText, parseGameChallengeIdFromMessage } from '@/services/gameChallenges';
 
 export type ChatMessage = {
   id: string;
@@ -129,13 +131,14 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           <div className="space-y-3">
             {messages.map((m) => {
               const isSelf = m.fromUserId === currentUserId;
+              const gcId = isGameChallengeMessageText(m.text) ? parseGameChallengeIdFromMessage(m.text) : null;
               return (
                 <div
                   key={m.id}
                   className={`group flex ${isSelf ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`chat-bubble max-w-[80%] rounded-2xl border px-3 py-2.5 ${
+                    className={`chat-bubble max-w-[min(92%,420px)] rounded-2xl border px-3 py-2.5 ${
                       isSelf
                         ? 'chat-bubble-self bg-blue-600/15 border-blue-400/30'
                         : 'chat-bubble-other bg-slate-950/20 border-slate-700/60'
@@ -153,10 +156,14 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                           />
                         </div>
                       )}
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm chat-bubble-text whitespace-pre-wrap text-slate-100">{m.text}</p>
-                          {isSelf && onDeleteMessage ? (
+                          {gcId ? (
+                            <GameChallengeDmCard challengeId={gcId} currentUserId={currentUserId} />
+                          ) : (
+                            <p className="text-sm chat-bubble-text whitespace-pre-wrap text-slate-100">{m.text}</p>
+                          )}
+                          {isSelf && onDeleteMessage && !gcId ? (
                             <button
                               type="button"
                               onClick={() => onDeleteMessage(m.id)}

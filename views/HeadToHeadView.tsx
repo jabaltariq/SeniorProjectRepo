@@ -229,7 +229,7 @@ const HeadToHeadCard: React.FC<HeadToHeadCardProps> = ({
               disabled={isActing}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
             >
-              <XIcon size={12} /> Withdraw
+              <XIcon size={12} /> Cancel challenge
             </button>
           )}
           {onDecline && (
@@ -305,7 +305,7 @@ function emptyCopy(bucket: HeadToHeadBucket): string {
 function emptyHint(bucket: HeadToHeadBucket): string {
   switch (bucket) {
     case 'incoming': return 'Place pending bets — others can fade them and they\'ll appear here.';
-    case 'outgoing': return 'Tap Counter-Bet on someone\'s profile to send a challenge.';
+    case 'outgoing': return "Use Counter on a profile or friend, or Counter-Bet on their slip, then cancel here if they haven't accepted yet.";
     case 'active':   return 'Locked-in H2Hs settle automatically when the game ends.';
     case 'history':  return 'Resolved, declined, and cancelled H2Hs land here.';
   }

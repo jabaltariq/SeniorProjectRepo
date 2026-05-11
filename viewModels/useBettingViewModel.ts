@@ -10,6 +10,7 @@ import {
   subscribeToUserBets,
 } from '@/services/dbOps';
 import { settlePendingApiOddsBetsForUser } from '@/services/settleApiOddsBets';
+import { settleActiveGameChallengesGlobal } from '@/services/gameChallenges';
 import { BoostType } from '@/services/dbOps';
 import { validateParlayAdd } from '@/services/parlayRules';
 
@@ -104,9 +105,11 @@ export function useBettingViewModel() {
     if (!uid) return;
 
     void settlePendingApiOddsBetsForUser(uid);
+    void settleActiveGameChallengesGlobal();
     const id = window.setInterval(() => {
       const u = localStorage.getItem('uid');
       if (u) void settlePendingApiOddsBetsForUser(u);
+      void settleActiveGameChallengesGlobal();
     }, 90_000);
     return () => window.clearInterval(id);
   }, [localStorage.getItem('userEmail')]);

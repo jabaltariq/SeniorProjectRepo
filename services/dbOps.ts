@@ -1483,6 +1483,8 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
 
         const money = typeof data.money === "number" ? data.money : Number(data.money) || 0;
 
+        const challengeWins = Number(data.challengeWins) || 0;
+
         topUserList.push({
             id:            docSnap.id,
             name,
@@ -1491,12 +1493,17 @@ export async function getTopUsers(): Promise<LeaderboardEntry[]> {
             profileBackgroundUrl: resolveProfileBackgroundUrl(docSnap.id, name, data),
             netWorth:      Math.round(money),
             winRate,
+            challengeWins,
             rank:          1,
             isCurrentUser: false,
         });
     }
 
-    topUserList.sort((a, b) => b.netWorth - a.netWorth);
+    topUserList.sort((a, b) => {
+      const w = b.netWorth - a.netWorth;
+      if (w !== 0) return w;
+      return (b.challengeWins ?? 0) - (a.challengeWins ?? 0);
+    });
     topUserList.forEach((user, i) => { user.rank = i + 1; });
 
     return topUserList;
@@ -2014,6 +2021,100 @@ export async function sendFriendRequest(username : string, senderUid : string | 
         receiver: recipientUid,
     });
     return { success: true };
+}
+
+const PEER_CHALLENGES_COLLECTION = "peerChallenges";
+
+export interface SendPeerChallengeResult {
+    success: boolean;
+    error?: string;
+}
+
+/**
+ * Persists a social challenge from `challengerUid` to `targetUid`.
+ * Counter-bets on a specific slip still use {@link proposeHeadToHead}; this
+ * records the gesture so flows can surface it later without tying it to a bet.
+ */
+export async function sendPeerChallenge(
+    challengerUid: string,
+    targetUid: string,
+): Promise<SendPeerChallengeResult> {
+    if (!challengerUid?.trim() || !targetUid?.trim()) {
+        return { success: false, error: "Missing user" };
+    }
+    if (challengerUid === targetUid) {
+        return { success: false, error: "You can't challenge yourself" };
+    }
+    try {
+        const [targetSnap, challengerSnap] = await Promise.all([
+            getDoc(doc(db, "userInfo", targetUid)),
+            getDoc(doc(db, "userInfo", challengerUid)),
+        ]);
+        if (!targetSnap.exists()) {
+            return { success: false, error: "Player not found" };
+        }
+        if (!challengerSnap.exists()) {
+            return { success: false, error: "Sign in again" };
+        }
+        const challengerData = challengerSnap.data();
+        const challengerName =
+            typeof challengerData?.["name"] === "string" ? (challengerData["name"] as string) : "";
+        const docId = `${challengerUid}_${targetUid}`;
+        await setDoc(
+            doc(db, PEER_CHALLENGES_COLLECTION, docId),
+            {
+                challengerUid,
+                targetUid,
+                challengerName,
+                createdAt: Timestamp.now(),
+                status: "sent",
+            },
+            { merge: true },
+        );
+        return { success: true };
+    } catch (e) {
+        console.error("sendPeerChallenge failed", e);
+        return { success: false, error: "Could not send challenge" };
+    }
+}
+
+export interface CancelPeerChallengeResult {
+    success: boolean;
+    error?: string;
+}
+
+/** Marks a {@link sendPeerChallenge} doc as cancelled (challenger only). */
+export async function cancelPeerChallenge(
+    challengerUid: string,
+    targetUid: string,
+): Promise<CancelPeerChallengeResult> {
+    if (!challengerUid?.trim() || !targetUid?.trim()) {
+        return { success: false, error: "Missing user" };
+    }
+    const docId = `${challengerUid}_${targetUid}`;
+    const ref = doc(db, PEER_CHALLENGES_COLLECTION, docId);
+    try {
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+            return { success: false, error: "Nothing to cancel" };
+        }
+        const data = snap.data();
+        if (String(data["challengerUid"] ?? "") !== challengerUid) {
+            return { success: false, error: "Wrong user" };
+        }
+        if (String(data["status"] ?? "") === "cancelled") {
+            return { success: true };
+        }
+        await setDoc(
+            ref,
+            { status: "cancelled", cancelledAt: Timestamp.now() },
+            { merge: true },
+        );
+        return { success: true };
+    } catch (e) {
+        console.error("cancelPeerChallenge failed", e);
+        return { success: false, error: "Could not cancel" };
+    }
 }
 
 /**

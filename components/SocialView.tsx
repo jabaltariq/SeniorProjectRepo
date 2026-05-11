@@ -168,7 +168,7 @@ export const SocialView: React.FC<SocialViewProps> = ({ friends, friendRequests,
                 onClick={() => onChallenge(friend)}
                 className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[10px] font-bold uppercase"
               >
-                <Swords size={14} /> Challenge
+                <Swords size={14} /> Counter
               </button>
             </div>
           ))}

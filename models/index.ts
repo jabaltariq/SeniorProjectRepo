@@ -74,6 +74,8 @@ export interface LeaderboardEntry {
   profileBackgroundUrl?: string;
   netWorth: number;
   winRate: number;
+  /** Accepted peer game challenges won (settled). */
+  challengeWins: number;
   rank: number;
   isCurrentUser?: boolean;
 }

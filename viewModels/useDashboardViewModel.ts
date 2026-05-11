@@ -12,7 +12,7 @@ import {
   type UserThemeMode,
   subscribeToCommunityActivity,
   subscribeToFriendRequests,
-  subscribeToFriends
+  subscribeToFriends,
 } from '../services/dbOps';
 
 /**
@@ -117,10 +117,6 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     };
   }, [auth.userEmail]);
 
-  const handleChallenge = useCallback((friend: Friend) => {
-    alert(`Challenge request sent to ${friend.name}! Head-to-head competition initiated.`);
-  }, []);
-
   const updateThemeMode = useCallback(async (nextThemeMode: UserThemeMode) => {
     if (themeMode === nextThemeMode) return;
     const uid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') : null;
@@ -148,7 +144,6 @@ export function useDashboardViewModel(auth: AuthViewModel) {
     markets,
     view,
     setView,
-    handleChallenge,
     leaderboardEntries,
     friends: friends,
     activity: activities,

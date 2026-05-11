@@ -418,7 +418,7 @@ export const SocialMessagingView: React.FC<SocialMessagingViewProps> = ({
                     onChallenge(friend);
                   }}
                   className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 items-center justify-center gap-1 text-[10px] font-bold uppercase pointer-events-auto"
-                  aria-label={`Challenge ${friend.name}`}
+                  aria-label={`Counter ${friend.name}`}
                 >
                   <Swords size={14} />
                 </button>
