@@ -244,7 +244,7 @@ export const CounterOpponentModal: React.FC<CounterOpponentModalProps> = ({
             <ChevronRight size={18} />
           </button>
           <p className="mt-2 text-center text-[10px] text-slate-500">
-            Withdraw a pending counter from Head-to-Head → Outgoing → Cancel challenge.
+            Withdraw a pending counter from Head-to-Head → Their turn → Cancel challenge.
           </p>
         </div>
       </div>

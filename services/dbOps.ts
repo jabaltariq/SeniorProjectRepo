@@ -3021,7 +3021,7 @@ async function refundChallengerAndClose(
 }
 
 /** Convert a Firestore document into a typed HeadToHead object. */
-function mapHeadToHead(id: string, data: DocumentData): HeadToHead {
+export function mapHeadToHead(id: string, data: DocumentData): HeadToHead {
     const eventStartsAtRaw = data.eventStartsAt as Timestamp | undefined;
     const createdAtRaw     = data.createdAt     as Timestamp | undefined;
     const acceptedAtRaw    = data.acceptedAt    as Timestamp | undefined;

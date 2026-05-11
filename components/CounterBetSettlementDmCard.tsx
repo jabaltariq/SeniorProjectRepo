@@ -191,7 +191,7 @@ export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProp
               viewer === 'win' ? 'text-amber-200/90' : viewer === 'loss' ? 'text-rose-200/85' : 'text-slate-400'
             }`}
           >
-            Counter settled
+            Counter settled.
           </p>
           <h4
             className={`mt-1 text-lg font-black tracking-tight ${
@@ -213,7 +213,7 @@ export const CounterBetSettlementDmCard: React.FC<CounterBetSettlementDmCardProp
             Escrow pot <span className="text-slate-200">${totalEscrow.toFixed(2)}</span>
           </p>
           {onOpenFull ? (
-            <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Tap for full-screen recap</p>
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">View Recap:</p>
           ) : null}
         </div>
       </div>

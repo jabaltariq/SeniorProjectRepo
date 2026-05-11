@@ -193,6 +193,26 @@ function userWonH2h(
   return (status === 'WON_BY_ORIGINAL' && uid === orig) || (status === 'WON_BY_CHALLENGER' && uid === chall);
 }
 
+function userLostH2h(
+  data: { status?: unknown; originalUserId?: unknown; challengerUserId?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  return (status === 'WON_BY_ORIGINAL' && uid === chall) || (status === 'WON_BY_CHALLENGER' && uid === orig);
+}
+
+function userPushH2h(data: { status?: unknown }, _uid: string): boolean {
+  return String(data.status ?? '') === 'PUSH';
+}
+
+function h2hYourSideLabel(data: Record<string, unknown>, uid: string): string {
+  const orig = String(data.originalUserId ?? '');
+  if (uid === orig) return String(data.originalSide ?? 'Your pick');
+  return `Fade (${String(data.originalSide ?? '')})`;
+}
+
 function h2hDocToWinPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
   const orig = String(data.originalUserId ?? '');
   const chall = String(data.challengerUserId ?? '');
@@ -207,6 +227,29 @@ function h2hDocToWinPayload(data: Record<string, unknown>, uid: string): WinCele
   };
 }
 
+function h2hDocToLossPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  const opponent = uid === orig ? chall : orig;
+  return {
+    kind: 'h2h_loss',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+    yourSideLabel: h2hYourSideLabel(data, uid),
+  };
+}
+
+function h2hDocToPushPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const orig = String(data.originalUserId ?? '');
+  const chall = String(data.challengerUserId ?? '');
+  const opponent = uid === orig ? chall : orig;
+  return {
+    kind: 'h2h_push',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+  };
+}
+
 function userWonGc(
   data: { status?: unknown; challengerUid?: unknown; opponentUid?: unknown },
   uid: string,
@@ -215,6 +258,20 @@ function userWonGc(
   const chall = String(data.challengerUid ?? '');
   const opp = String(data.opponentUid ?? '');
   return (status === 'COMPLETED_CHALLENGER' && uid === chall) || (status === 'COMPLETED_OPPONENT' && uid === opp);
+}
+
+function userLostGc(
+  data: { status?: unknown; challengerUid?: unknown; opponentUid?: unknown },
+  uid: string,
+): boolean {
+  const status = String(data.status ?? '');
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  return (status === 'COMPLETED_CHALLENGER' && uid === opp) || (status === 'COMPLETED_OPPONENT' && uid === chall);
+}
+
+function userPushGc(data: { status?: unknown }, _uid: string): boolean {
+  return String(data.status ?? '') === 'PUSH';
 }
 
 function gcDocToWinPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
@@ -233,6 +290,31 @@ function gcDocToWinPayload(data: Record<string, unknown>, uid: string): WinCeleb
     opponentUid: chall,
     marketTitle: String(data.marketTitle ?? ''),
     yourPick: String(data.opponentPickLabel ?? ''),
+  };
+}
+
+function gcDocToLossPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  const opponent = uid === chall ? opp : chall;
+  const yourPick =
+    uid === chall ? String(data.challengerPickLabel ?? '') : String(data.opponentPickLabel ?? '');
+  return {
+    kind: 'gc_loss',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
+    yourPick,
+  };
+}
+
+function gcDocToPushPayload(data: Record<string, unknown>, uid: string): WinCelebrationPayload {
+  const chall = String(data.challengerUid ?? '');
+  const opp = String(data.opponentUid ?? '');
+  const opponent = uid === chall ? opp : chall;
+  return {
+    kind: 'gc_push',
+    opponentUid: opponent,
+    marketTitle: String(data.marketTitle ?? ''),
   };
 }
 
@@ -294,26 +376,55 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   const [celebrationQueue, setCelebrationQueue] = useState<QueuedCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<QueuedCelebration | null>(null);
   const [challengeFriendTarget, setChallengeFriendTarget] = useState<Friend | null>(null);
+  const [h2hNavAttention, setH2hNavAttention] = useState(false);
+  const h2hPendingOrigRef = useRef(false);
+  const gcPendingOppRef = useRef(false);
   const seenWinningBetIds = useRef<Set<string>>(new Set());
   const hasInitializedWinTracking = useRef(false);
-  const seenH2hWinCelebrationIds = useRef<Set<string>>(new Set());
+  const seenPeerOutcomeModalIds = useRef<Set<string>>(new Set());
   const h2hBootstrapDone = useRef(false);
   const lastH2hOrigSnap = useRef<QuerySnapshot | null>(null);
   const lastH2hChallSnap = useRef<QuerySnapshot | null>(null);
-  const seenGcWinCelebrationIds = useRef<Set<string>>(new Set());
   const gcBootstrapDone = useRef(false);
   const lastGcChallSnap = useRef<QuerySnapshot | null>(null);
   const lastGcOppSnap = useRef<QuerySnapshot | null>(null);
 
   const userUid = typeof localStorage !== 'undefined' ? localStorage.getItem('uid') ?? '' : '';
   const seenWinningBetsStorageKey = userUid ? `bethub_seen_winning_bets:${userUid}` : '';
-  const seenH2hWinCelebrationStorageKey = userUid ? `bethub_seen_h2h_win_celebration:${userUid}` : '';
-  const seenGcWinCelebrationStorageKey = userUid ? `bethub_seen_gc_win_celebration:${userUid}` : '';
+  const peerOutcomeModalStorageKey = userUid ? `bethub_seen_peer_outcome_modal:${userUid}` : '';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
     document.documentElement.dataset.theme = isLightMode ? 'light' : 'ocean';
   }, [isLightMode]);
+
+  useEffect(() => {
+    if (!userUid) {
+      h2hPendingOrigRef.current = false;
+      gcPendingOppRef.current = false;
+      setH2hNavAttention(false);
+      return;
+    }
+    const sync = () => setH2hNavAttention(h2hPendingOrigRef.current || gcPendingOppRef.current);
+    const qH = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
+    const qGc = query(collection(db, GC_COL), where('opponentUid', '==', userUid));
+    const u1 = onSnapshot(qH, (snap) => {
+      h2hPendingOrigRef.current = snap.docs.some(
+        (d) => String((d.data() as Record<string, unknown>).status ?? '') === 'PENDING_ACCEPT',
+      );
+      sync();
+    });
+    const u2 = onSnapshot(qGc, (snap) => {
+      gcPendingOppRef.current = snap.docs.some(
+        (d) => String((d.data() as Record<string, unknown>).status ?? '') === 'PENDING_ACCEPT',
+      );
+      sync();
+    });
+    return () => {
+      u1();
+      u2();
+    };
+  }, [userUid]);
 
   const normalizeSpreadLine = (line: number) => (line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1));
   const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
@@ -513,12 +624,14 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   useEffect(() => {
     seenWinningBetIds.current = new Set();
     hasInitializedWinTracking.current = false;
-    seenH2hWinCelebrationIds.current = seenH2hWinCelebrationStorageKey
-      ? readStringSetFromLs(seenH2hWinCelebrationStorageKey)
-      : new Set();
-    seenGcWinCelebrationIds.current = seenGcWinCelebrationStorageKey
-      ? readStringSetFromLs(seenGcWinCelebrationStorageKey)
-      : new Set();
+    if (peerOutcomeModalStorageKey && userUid) {
+      const merged = readStringSetFromLs(peerOutcomeModalStorageKey);
+      readStringSetFromLs(`bethub_seen_h2h_win_celebration:${userUid}`).forEach((k) => merged.add(k));
+      readStringSetFromLs(`bethub_seen_gc_win_celebration:${userUid}`).forEach((k) => merged.add(k));
+      seenPeerOutcomeModalIds.current = merged;
+    } else {
+      seenPeerOutcomeModalIds.current = new Set();
+    }
     h2hBootstrapDone.current = false;
     gcBootstrapDone.current = false;
     lastH2hOrigSnap.current = null;
@@ -527,7 +640,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
     lastGcOppSnap.current = null;
     setCelebrationQueue([]);
     setActiveCelebration(null);
-  }, [userUid, seenH2hWinCelebrationStorageKey, seenGcWinCelebrationStorageKey]);
+  }, [userUid, peerOutcomeModalStorageKey]);
 
   useEffect(() => {
     if (!userUid) return;
@@ -581,9 +694,10 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
   }, [activeCelebration, celebrationQueue]);
 
   useEffect(() => {
-    if (!userUid || !seenH2hWinCelebrationStorageKey) return;
+    if (!userUid || !peerOutcomeModalStorageKey) return;
 
-    const persistH2hSeen = () => writeStringSetToLs(seenH2hWinCelebrationStorageKey, seenH2hWinCelebrationIds.current);
+    const persistPeerOutcomesSeen = () =>
+      writeStringSetToLs(peerOutcomeModalStorageKey, seenPeerOutcomeModalIds.current);
 
     const tryBootstrapH2h = () => {
       if (h2hBootstrapDone.current) return;
@@ -592,9 +706,25 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       const merged = new Map([...lastH2hOrigSnap.current.docs, ...lastH2hChallSnap.current.docs].map((d) => [d.id, d]));
       merged.forEach((d) => {
         const data = d.data() as Record<string, unknown>;
-        if (userWonH2h(data, userUid)) seenH2hWinCelebrationIds.current.add(`h2h_win:${d.id}`);
+        if (userWonH2h(data, userUid)) seenPeerOutcomeModalIds.current.add(`h2h_win:${d.id}`);
+        if (userLostH2h(data, userUid)) seenPeerOutcomeModalIds.current.add(`h2h_loss:${d.id}`);
+        if (userPushH2h(data, userUid)) seenPeerOutcomeModalIds.current.add(`h2h_push:${d.id}`);
       });
-      persistH2hSeen();
+      persistPeerOutcomesSeen();
+    };
+
+    const queueIfNew = (dedupe: string, payload: WinCelebrationPayload) => {
+      if (seenPeerOutcomeModalIds.current.has(dedupe)) return;
+      seenPeerOutcomeModalIds.current.add(dedupe);
+      persistPeerOutcomesSeen();
+      setCelebrationQueue((prev) => (prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }]));
+    };
+
+    const processH2hDoc = (docSnap: { id: string; data: () => Record<string, unknown> }) => {
+      const data = docSnap.data();
+      if (userWonH2h(data, userUid)) queueIfNew(`h2h_win:${docSnap.id}`, h2hDocToWinPayload(data, userUid));
+      if (userLostH2h(data, userUid)) queueIfNew(`h2h_loss:${docSnap.id}`, h2hDocToLossPayload(data, userUid));
+      if (userPushH2h(data, userUid)) queueIfNew(`h2h_push:${docSnap.id}`, h2hDocToPushPayload(data, userUid));
     };
 
     const qOrig = query(collection(db, H2H_COL), where('originalUserId', '==', userUid));
@@ -606,16 +736,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       if (!h2hBootstrapDone.current) return;
       snap.docChanges().forEach((ch) => {
         if (ch.type === 'removed') return;
-        const data = ch.doc.data() as Record<string, unknown>;
-        if (!userWonH2h(data, userUid)) return;
-        const dedupe = `h2h_win:${ch.doc.id}`;
-        if (seenH2hWinCelebrationIds.current.has(dedupe)) return;
-        seenH2hWinCelebrationIds.current.add(dedupe);
-        persistH2hSeen();
-        const payload = h2hDocToWinPayload(data, userUid);
-        setCelebrationQueue((prev) =>
-          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
-        );
+        processH2hDoc(ch.doc);
       });
     });
 
@@ -625,16 +746,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       if (!h2hBootstrapDone.current) return;
       snap.docChanges().forEach((ch) => {
         if (ch.type === 'removed') return;
-        const data = ch.doc.data() as Record<string, unknown>;
-        if (!userWonH2h(data, userUid)) return;
-        const dedupe = `h2h_win:${ch.doc.id}`;
-        if (seenH2hWinCelebrationIds.current.has(dedupe)) return;
-        seenH2hWinCelebrationIds.current.add(dedupe);
-        persistH2hSeen();
-        const payload = h2hDocToWinPayload(data, userUid);
-        setCelebrationQueue((prev) =>
-          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
-        );
+        processH2hDoc(ch.doc);
       });
     });
 
@@ -642,12 +754,13 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       unsubOrig();
       unsubChall();
     };
-  }, [userUid, seenH2hWinCelebrationStorageKey]);
+  }, [userUid, peerOutcomeModalStorageKey]);
 
   useEffect(() => {
-    if (!userUid || !seenGcWinCelebrationStorageKey) return;
+    if (!userUid || !peerOutcomeModalStorageKey) return;
 
-    const persistGcSeen = () => writeStringSetToLs(seenGcWinCelebrationStorageKey, seenGcWinCelebrationIds.current);
+    const persistPeerOutcomesSeen = () =>
+      writeStringSetToLs(peerOutcomeModalStorageKey, seenPeerOutcomeModalIds.current);
 
     const tryBootstrapGc = () => {
       if (gcBootstrapDone.current) return;
@@ -656,9 +769,25 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       const merged = new Map([...lastGcChallSnap.current.docs, ...lastGcOppSnap.current.docs].map((d) => [d.id, d]));
       merged.forEach((d) => {
         const data = d.data() as Record<string, unknown>;
-        if (userWonGc(data, userUid)) seenGcWinCelebrationIds.current.add(`gc_win:${d.id}`);
+        if (userWonGc(data, userUid)) seenPeerOutcomeModalIds.current.add(`gc_win:${d.id}`);
+        if (userLostGc(data, userUid)) seenPeerOutcomeModalIds.current.add(`gc_loss:${d.id}`);
+        if (userPushGc(data, userUid)) seenPeerOutcomeModalIds.current.add(`gc_push:${d.id}`);
       });
-      persistGcSeen();
+      persistPeerOutcomesSeen();
+    };
+
+    const queueIfNew = (dedupe: string, payload: WinCelebrationPayload) => {
+      if (seenPeerOutcomeModalIds.current.has(dedupe)) return;
+      seenPeerOutcomeModalIds.current.add(dedupe);
+      persistPeerOutcomesSeen();
+      setCelebrationQueue((prev) => (prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }]));
+    };
+
+    const processGcDoc = (docSnap: { id: string; data: () => Record<string, unknown> }) => {
+      const data = docSnap.data();
+      if (userWonGc(data, userUid)) queueIfNew(`gc_win:${docSnap.id}`, gcDocToWinPayload(data, userUid));
+      if (userLostGc(data, userUid)) queueIfNew(`gc_loss:${docSnap.id}`, gcDocToLossPayload(data, userUid));
+      if (userPushGc(data, userUid)) queueIfNew(`gc_push:${docSnap.id}`, gcDocToPushPayload(data, userUid));
     };
 
     const qChall = query(collection(db, GC_COL), where('challengerUid', '==', userUid));
@@ -670,16 +799,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       if (!gcBootstrapDone.current) return;
       snap.docChanges().forEach((ch) => {
         if (ch.type === 'removed') return;
-        const data = ch.doc.data() as Record<string, unknown>;
-        if (!userWonGc(data, userUid)) return;
-        const dedupe = `gc_win:${ch.doc.id}`;
-        if (seenGcWinCelebrationIds.current.has(dedupe)) return;
-        seenGcWinCelebrationIds.current.add(dedupe);
-        persistGcSeen();
-        const payload = gcDocToWinPayload(data, userUid);
-        setCelebrationQueue((prev) =>
-          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
-        );
+        processGcDoc(ch.doc);
       });
     });
 
@@ -689,16 +809,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       if (!gcBootstrapDone.current) return;
       snap.docChanges().forEach((ch) => {
         if (ch.type === 'removed') return;
-        const data = ch.doc.data() as Record<string, unknown>;
-        if (!userWonGc(data, userUid)) return;
-        const dedupe = `gc_win:${ch.doc.id}`;
-        if (seenGcWinCelebrationIds.current.has(dedupe)) return;
-        seenGcWinCelebrationIds.current.add(dedupe);
-        persistGcSeen();
-        const payload = gcDocToWinPayload(data, userUid);
-        setCelebrationQueue((prev) =>
-          prev.some((q) => q.key === dedupe) ? prev : [...prev, { key: dedupe, payload }],
-        );
+        processGcDoc(ch.doc);
       });
     });
 
@@ -706,7 +817,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
       unsubChall();
       unsubOpp();
     };
-  }, [userUid, seenGcWinCelebrationStorageKey]);
+  }, [userUid, peerOutcomeModalStorageKey]);
 
   const handleCloseCelebration = async (opts?: { banter?: string }) => {
     const cur = activeCelebration;
@@ -1296,7 +1407,7 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
                                       {peerFriend?.name ?? '…'}
                                     </p>
                                     <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 group-hover:text-slate-300">
-                                      Tap for profile
+                                      View profile
                                     </p>
                                   </div>
                                   {peer.kind === 'counter' ? (
@@ -1904,9 +2015,23 @@ export const DashboardView: React.FC<DashboardViewProps> = (props) => {
             <NavLink to="/history" title="History" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-blue-600/10 text-blue-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <Receipt size={24} />
             </NavLink>
-            <NavLink to="/head-to-head" title="Head-to-Head" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-red-500/10 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}>
-              <Swords size={24} />
-            </NavLink>
+            <span className="relative inline-flex">
+              <NavLink
+                to="/head-to-head"
+                title="Head-to-Head"
+                className={({ isActive }) =>
+                  `p-3 rounded-xl transition-all ${isActive ? 'bg-red-500/10 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`
+                }
+              >
+                <Swords size={24} />
+              </NavLink>
+              {h2hNavAttention ? (
+                <span
+                  className="pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-slate-900"
+                  aria-label="Pending head-to-head or challenge to review"
+                />
+              ) : null}
+            </span>
             <NavLink to="/store" title="Store" className={({ isActive }) => `p-3 rounded-xl transition-all ${isActive ? 'bg-violet-500/10 text-violet-400' : 'text-slate-500 hover:bg-slate-800'}`}>
               <ShoppingBag size={24} />
             </NavLink>

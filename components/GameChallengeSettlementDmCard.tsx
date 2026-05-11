@@ -89,7 +89,7 @@ export const GameChallengeSettlementDmCard: React.FC<GameChallengeSettlementDmCa
 
   const sub =
     viewer === 'win'
-      ? 'Your side hit — bragging rights earned.'
+      ? 'Your side hit!'
       : viewer === 'loss'
         ? 'Their pick was the right one this time.'
         : viewer === 'push'
@@ -150,7 +150,7 @@ export const GameChallengeSettlementDmCard: React.FC<GameChallengeSettlementDmCa
               Your side: <span className="text-emerald-300">{yourPick}</span>
             </p>
             {onOpenFull ? (
-              <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Tap for full-screen recap</p>
+              <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">View Recap:</p>
             ) : null}
           </div>
         </div>

@@ -263,7 +263,7 @@ export const PeerSettleDetailModal: React.FC<PeerSettleDetailModalProps> = ({
     const v = gcViewerOutcome(gcStatus, currentUserId, gcChUid, gcOpUid);
     const shell = v === 'win' ? shellWin : v === 'loss' ? shellLoss : v === 'push' ? shellPush : 'border-slate-600 bg-slate-950/90';
     const title =
-      v === 'win' ? 'You won the challenge' : v === 'loss' ? 'You lost the challenge' : v === 'push' ? 'Challenge pushed' : 'Game challenge';
+      v === 'win' ? 'You won the challenge.' : v === 'loss' ? 'You lost the challenge.' : v === 'push' ? 'Challenge pushed.' : 'Game challenge.';
     const yourPick = currentUserId === gcChUid ? gcChPick : gcOpPick;
     const theirPick = currentUserId === gcChUid ? gcOpPick : gcChPick;
 

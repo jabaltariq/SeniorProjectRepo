@@ -16,6 +16,7 @@ import {
   runTransaction,
   Timestamp,
   where,
+  type DocumentData,
 } from 'firebase/firestore';
 import { db } from '@/models/constants.ts';
 import type { Market, MarketOption } from '@/models';
@@ -88,6 +89,28 @@ export interface GameChallengeDoc {
   settledAt?: Timestamp;
 }
 
+/** Map a Firestore `gameChallenges` document (used by inbox listeners). */
+export function mapGameChallengeDoc(id: string, d: DocumentData): GameChallengeDoc {
+  return {
+    id,
+    challengerUid: String(d.challengerUid ?? ''),
+    opponentUid: String(d.opponentUid ?? ''),
+    challengerName: String(d.challengerName ?? ''),
+    opponentName: String(d.opponentName ?? ''),
+    sportKey: String(d.sportKey ?? ''),
+    eventId: String(d.eventId ?? ''),
+    marketTitle: String(d.marketTitle ?? ''),
+    challengerPickLabel: String(d.challengerPickLabel ?? ''),
+    challengerPickMarketKey: (d.challengerPickMarketKey as MarketOption['marketKey']) ?? 'h2h',
+    opponentPickLabel: String(d.opponentPickLabel ?? ''),
+    opponentPickMarketKey: (d.opponentPickMarketKey as MarketOption['marketKey']) ?? 'h2h',
+    status: (d.status as GameChallengeStatus) ?? 'PENDING_ACCEPT',
+    createdAt: (d.createdAt as Timestamp) ?? Timestamp.now(),
+    acceptedAt: d.acceptedAt as Timestamp | undefined,
+    settledAt: d.settledAt as Timestamp | undefined,
+  };
+}
+
 /** Opposite side for spreads / totals / ML when exactly two options share the same marketKey. */
 export function opposingOptionForMarket(market: Market, chosen: MarketOption): MarketOption | null {
   const key = chosen.marketKey ?? 'h2h';
@@ -110,25 +133,7 @@ export function parseGameChallengeIdFromMessage(text: string): string | null {
 export async function getGameChallenge(id: string): Promise<GameChallengeDoc | null> {
   const snap = await getDoc(doc(db, COL, id));
   if (!snap.exists()) return null;
-  const d = snap.data();
-  return {
-    id: snap.id,
-    challengerUid: String(d.challengerUid ?? ''),
-    opponentUid: String(d.opponentUid ?? ''),
-    challengerName: String(d.challengerName ?? ''),
-    opponentName: String(d.opponentName ?? ''),
-    sportKey: String(d.sportKey ?? ''),
-    eventId: String(d.eventId ?? ''),
-    marketTitle: String(d.marketTitle ?? ''),
-    challengerPickLabel: String(d.challengerPickLabel ?? ''),
-    challengerPickMarketKey: (d.challengerPickMarketKey as MarketOption['marketKey']) ?? 'h2h',
-    opponentPickLabel: String(d.opponentPickLabel ?? ''),
-    opponentPickMarketKey: (d.opponentPickMarketKey as MarketOption['marketKey']) ?? 'h2h',
-    status: (d.status as GameChallengeStatus) ?? 'PENDING_ACCEPT',
-    createdAt: (d.createdAt as Timestamp) ?? Timestamp.now(),
-    acceptedAt: d.acceptedAt as Timestamp | undefined,
-    settledAt: d.settledAt as Timestamp | undefined,
-  };
+  return mapGameChallengeDoc(snap.id, snap.data());
 }
 
 export type CreateGameChallengeResult =
