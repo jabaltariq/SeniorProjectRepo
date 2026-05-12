@@ -46,17 +46,7 @@ function sportKeyToSport(sportKey: string): string {
     baseball: 'Baseball',
     americanfootball: 'Football',
     icehockey: 'Hockey',
-    mma: 'MMA',
-    tennis: 'Tennis',
-    cricket: 'Cricket',
-    rugbyleague: 'Rugby League',
-    rugbyunion: 'Rugby Union',
-    aussierules: 'AFL',
-    golf: 'Golf',
-    boxing: 'Boxing',
-    cycling: 'Cycling',
-    darts: 'Darts',
-    esports: 'Esports',
+
   };
   return sportMap[sport] ?? sport.charAt(0).toUpperCase() + sport.slice(1);
 }
@@ -225,12 +215,25 @@ export async function fetchMarketsForSportTab(sportTab: string, region = 'us'): 
   const markets: Market[] = [];
 
   if (sportTab === 'ALL') {
-    const data = await fetchOddsForSport('upcoming', region);
-    for (const event of data) {
-      if (seen.has(event.id)) continue;
-      seen.add(event.id);
-      const market = transformEventToMarket(event);
-      if (market) markets.push(market);
+    const allKeys = [
+      'americanfootball_nfl',
+      'basketball_nba',
+      'baseball_mlb',
+      'icehockey_nhl',
+      'soccer_england_league1',
+      'soccer_uefa_champions_league',
+    ];
+    for (let i = 0; i < allKeys.length; i++) {
+      if (i > 0) await delay(MS_BETWEEN_ODDS_REQUESTS);
+      try {
+        const data = await fetchOddsForSport(allKeys[i], region);
+        for (const event of data) {
+          if (seen.has(event.id)) continue;
+          seen.add(event.id);
+          const market = transformEventToMarket(event);
+          if (market) markets.push(market);
+        }
+      } catch { /* one sport failing shouldn't block the rest */ }
     }
     return markets;
   }
@@ -286,21 +289,8 @@ const LEAGUE_PRIORITY = ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAF', 'NCAA'];
  */
 export async function fetchAndSetBetOfTheDay(region = 'us'): Promise<BetOfTheDay | null> {
   const now = new Date();
+  const in2hrs = new Date(now.getTime() + 2 * 60 * 60 * 1000);
   const in24hrs = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-  // Single API call — fetch all upcoming events
-  const markets = await fetchUpcomingOdds(region);
-
-  // Only games that start within the next 24 hours and have at least 2 options
-  // const in2hrs = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-
-  const ALLOWED_SPORT_PREFIXES = [
-    'americanfootball',
-    'basketball',
-    'baseball',
-    'icehockey',
-    'soccer',
-  ];
 
   const eligible = markets.filter(m => {
     if (!m.startTime) return false;
@@ -308,7 +298,7 @@ export async function fetchAndSetBetOfTheDay(region = 'us'): Promise<BetOfTheDay
     const sportAllowed = ALLOWED_SPORT_PREFIXES.some(prefix =>
         (m.sport_key ?? '').startsWith(prefix)
     );
-    return  start <= in24hrs && m.options.length >= 2 && sportAllowed;
+    return start > in2hrs && start <= in24hrs && m.options.length >= 2 && sportAllowed;
   });
 
   if (eligible.length === 0) return null;
