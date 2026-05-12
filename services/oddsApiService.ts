@@ -40,7 +40,7 @@ function americanToDecimal(american: number): number {
 
 function sportKeyToSport(sportKey: string): string {
   const sport = sportKey.split('_')[0] ?? '';
-  const sportMap: Record<string, string> = {
+  const sportMap: Record<string, string> = {  // list of sports (filtered, not all used) from odds api
     soccer: 'Soccer',
     basketball: 'Basketball',
     baseball: 'Baseball',
@@ -156,7 +156,7 @@ function transformEventToMarket(event: OddsApiEvent): Market | null {
   };
 }
 
-/** Odds API sport keys per dashboard tab (ALL uses upcoming only). */
+/** Odds API sport keys per dashboard tab (ALL is handled separately via `upcoming`). */
 const SPORT_API_KEYS: Record<string, string[]> = {
   Football: ['americanfootball_nfl', 'americanfootball_ncaaf'],
   Basketball: ['basketball_nba', 'basketball_ncaab'],
@@ -208,13 +208,26 @@ async function fetchOddsForSport(sportKey: string, region: string): Promise<Odds
 }
 
 /**
- * Fetches odds only for the selected dashboard tab (ALL = single upcoming request).
+ * Fetches odds only for the selected dashboard tab.
+ * ALL uses a single `/v4/sports/upcoming/odds` request (one quota hit); on failure, falls back to per-sport requests.
  */
 export async function fetchMarketsForSportTab(sportTab: string, region = 'us'): Promise<Market[]> {
   const seen = new Set<string>();
   const markets: Market[] = [];
 
   if (sportTab === 'ALL') {
+    try {
+      const data = await fetchOddsForSport('upcoming', region);
+      for (const event of data) {
+        if (seen.has(event.id)) continue;
+        seen.add(event.id);
+        const market = transformEventToMarket(event);
+        if (market) markets.push(market);
+      }
+      return markets;
+    } catch {
+      /* network / quota — try legacy multi-sport path */
+    }
     const allKeys = [
       'americanfootball_nfl',
       'basketball_nba',
@@ -275,6 +288,9 @@ export async function fetchUpcomingOdds(region = 'us'): Promise<Market[]> {
 /** League priority for picking the best game of the day. */
 const LEAGUE_PRIORITY = ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAF', 'NCAA'];
 
+/** Odds API `sport_key` prefixes allowed for bet-of-the-day seeding. */
+const ALLOWED_SPORT_PREFIXES = ['basketball', 'americanfootball', 'baseball', 'icehockey', 'soccer'];
+
 /**
  * Fetches upcoming odds, picks the best game starting within the next 24 hours,
  * and saves it as today's bet of the day in Firestore.
@@ -288,6 +304,7 @@ const LEAGUE_PRIORITY = ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAF', 'NCAA'];
  * @returns The saved BetOfTheDay, or null if no eligible games were found.
  */
 export async function fetchAndSetBetOfTheDay(region = 'us'): Promise<BetOfTheDay | null> {
+  const markets = await fetchMarketsForSportTab('ALL', region);
   const now = new Date();
   const in2hrs = new Date(now.getTime() + 2 * 60 * 60 * 1000);
   const in24hrs = new Date(now.getTime() + 24 * 60 * 60 * 1000);

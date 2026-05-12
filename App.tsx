@@ -81,7 +81,7 @@ const App: React.FC = () => {
         onSelectLeagueInSport={dashboard.markets.selectLeagueInSport}
         onLeagueFilter={dashboard.markets.setLeagueFilter}
         onSearchChange={dashboard.markets.setSearchQuery}
-        onRetryMarkets={dashboard.markets.loadMarkets}
+        onRetryMarkets={() => void dashboard.markets.loadMarkets(undefined, { force: true })}
         themeMode={dashboard.themeMode}
         themeSaving={dashboard.themeSaving}
         onThemeModeChange={dashboard.updateThemeMode}

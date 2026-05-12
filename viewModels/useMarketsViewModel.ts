@@ -7,6 +7,9 @@ import { marketSearchHaystack, queryMatchesHaystack } from '@/lib/marketSearch';
 /** Cap deduped events kept for instant search (memory + stale data tradeoff). */
 const MAX_MARKET_SEARCH_CACHE = 1200;
 
+/** Within this window, re-selecting the same tab uses cache only (no Odds API call). */
+const TAB_CACHE_TTL_MS = 120_000;
+
 function mergeIntoSearchCache(cache: Map<string, Market>, incoming: Market[]) {
   for (const m of incoming) {
     cache.set(m.id, m);
@@ -22,9 +25,12 @@ function defaultSportTab(): string {
   return 'ALL';
 }
 
+type TabCacheEntry = { markets: Market[]; fetchedAt: number };
+
 /**
  * Odds/markets from The Odds API. Filters: sport tab, league, search.
- * Search is in-memory only: each successful tab load merges into a deduped cache (zero extra API calls).
+ * Per-tab response cache (TTL) avoids refetching on tab ping-pong; stale data revalidates in the background.
+ * Search merges each successful load into a deduped cache (no extra API for search).
  */
 export function useMarketsViewModel() {
   const MOCK_NFL_LEAGUE = 'NFL';
@@ -38,30 +44,60 @@ export function useMarketsViewModel() {
   const fetchGeneration = useRef(0);
   const didInitialFetch = useRef(false);
   const marketSearchCacheRef = useRef(new Map<string, Market>());
+  const tabCacheRef = useRef(new Map<string, TabCacheEntry>());
   const [searchCacheTick, bumpSearchCache] = useReducer((n: number) => n + 1, 0);
 
-  const loadMarkets = useCallback(async (sportTab?: string) => {
-    const tab = sportTab ?? sportFilter;
-    if (!tab) return;
+  const applyMarketsToState = useCallback((data: Market[]) => {
+    setMarkets(data);
+    mergeIntoSearchCache(marketSearchCacheRef.current, data);
+    bumpSearchCache();
+  }, []);
 
-    const gen = ++fetchGeneration.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchMarketsForSportTab(tab, 'us');
-      if (gen !== fetchGeneration.current) return;
-      setMarkets(data);
-      mergeIntoSearchCache(marketSearchCacheRef.current, data);
-      bumpSearchCache();
-    } catch (e) {
-      if (gen !== fetchGeneration.current) return;
-      setError(e instanceof Error ? e.message : 'Failed to load odds');
-    } finally {
-      if (gen === fetchGeneration.current) {
-        setLoading(false);
+  const loadMarkets = useCallback(
+    async (sportTab?: string, opts?: { force?: boolean }) => {
+      const tab = sportTab ?? sportFilter;
+      if (!tab) return;
+      const force = opts?.force === true;
+      const gen = ++fetchGeneration.current;
+
+      if (!force) {
+        const cached = tabCacheRef.current.get(tab);
+        if (cached && Date.now() - cached.fetchedAt < TAB_CACHE_TTL_MS) {
+          if (gen !== fetchGeneration.current) return;
+          applyMarketsToState(cached.markets);
+          setError(null);
+          setLoading(false);
+          return;
+        }
       }
-    }
-  }, [sportFilter]);
+
+      const staleEntry = !force ? tabCacheRef.current.get(tab) : undefined;
+      const silentRevalidate = Boolean(
+        staleEntry && Date.now() - staleEntry.fetchedAt >= TAB_CACHE_TTL_MS,
+      );
+
+      if (silentRevalidate && staleEntry) {
+        applyMarketsToState(staleEntry.markets);
+      }
+      if (!silentRevalidate) setLoading(true);
+      setError(null);
+
+      try {
+        const data = await fetchMarketsForSportTab(tab, 'us');
+        if (gen !== fetchGeneration.current) return;
+        tabCacheRef.current.set(tab, { markets: data, fetchedAt: Date.now() });
+        applyMarketsToState(data);
+      } catch (e) {
+        if (gen !== fetchGeneration.current) return;
+        setError(e instanceof Error ? e.message : 'Failed to load odds');
+      } finally {
+        if (gen === fetchGeneration.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [sportFilter, applyMarketsToState],
+  );
 
   const handleSportFilter = useCallback(
     (sport: string) => {
@@ -73,17 +109,21 @@ export function useMarketsViewModel() {
       }
       void loadMarkets(sport);
     },
-    [loadMarkets]
+    [loadMarkets],
   );
 
   /** Sidebar / popular: jump to one sport + league without the sport handler resetting league to ALL. */
   const selectLeagueInSport = useCallback(
     (sport: string, league: string) => {
+      if (sport === sportFilter) {
+        setLeagueFilter(league);
+        return;
+      }
       setSportFilter(sport);
       setLeagueFilter(league);
       void loadMarkets(sport);
     },
-    [loadMarkets]
+    [loadMarkets, sportFilter],
   );
 
   useEffect(() => {
@@ -112,7 +152,7 @@ export function useMarketsViewModel() {
   // While searching, do not hide games behind a league chip (e.g. NCAAF-only vs NFL team names).
   const effectiveLeagueFilter = searchTrimmed ? 'ALL' : leagueFilter;
   const leagueFiltered = sportFilteredMarkets.filter(
-    (m) => effectiveLeagueFilter === 'ALL' || m.subtitle === effectiveLeagueFilter
+    (m) => effectiveLeagueFilter === 'ALL' || m.subtitle === effectiveLeagueFilter,
   );
 
   /** Drop events too far out to limit noise and match “soonest first” browsing. */

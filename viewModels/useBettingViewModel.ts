@@ -106,11 +106,12 @@ export function useBettingViewModel() {
 
     void settlePendingApiOddsBetsForUser(uid);
     void settleActiveGameChallengesGlobal();
+    // Odds API quota: scores requests add up; 3m is still responsive for settlement UX.
     const id = window.setInterval(() => {
       const u = localStorage.getItem('uid');
       if (u) void settlePendingApiOddsBetsForUser(u);
       void settleActiveGameChallengesGlobal();
-    }, 90_000);
+    }, 180_000);
     return () => window.clearInterval(id);
   }, [localStorage.getItem('userEmail')]);
 
